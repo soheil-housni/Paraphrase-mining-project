@@ -27,7 +27,7 @@ from sklearn.model_selection import train_test_split
 df = pd.read_parquet("hf://datasets/sentence-transformers/quora-duplicates/pair-class/train-00000-of-00001.parquet")
 
 array=np.array(df)
-array=array[:2000]
+array=array[:5000]
 
 
 
@@ -38,8 +38,10 @@ class CustomSbertModel(nn.Module):
         self.n_classes=n_classes
         self.sbert=SentenceTransformer(pretrained_sbert_model_name)
         self.embedding_dimension=self.sbert.get_sentence_embedding_dimension()
-        self.linear=nn.Linear(in_features=3*self.embedding_dimension, out_features=n_classes)
-        
+        self.linear1=nn.Linear(in_features=3*self.embedding_dimension, out_features=3*self.embedding_dimension//2)
+        self.last_linear=nn.Linear(in_features=3*self.embedding_dimension//2, out_features=n_classes)
+        self.relu=nn.ReLU()
+        self.dropout=nn.Dropout(p=0.1)
     def forward(self,sentence1, sentence2,batch_size):
         embedding1=self.sbert.encode(sentences=sentence1,batch_size=batch_size)
         embedding2=self.sbert.encode(sentences=sentence2,batch_size=batch_size)
@@ -47,7 +49,10 @@ class CustomSbertModel(nn.Module):
         embedding2_torch=torch.tensor(embedding2)
         diff=torch.abs(embedding1_torch-embedding2_torch)
         characteristic_vector=torch.cat([embedding1_torch,embedding2_torch,diff],dim=1)
-        logits=self.linear(characteristic_vector)
+        logits=self.linear1(characteristic_vector)
+        logits=self.relu(logits)
+        logits=self.dropout(logits)
+        logits=self.last_linear(logits)
         return logits
         
 
@@ -76,11 +81,13 @@ def training_modules(model,n_epochs,batch_size,X_train):
     loss_fn=torch.nn.CrossEntropyLoss()
     return optimizer,scheduler,loss_fn
 
+
 def training(model,X_train,y_train,X_val,y_val,n_epochs=5,batch_size=32):
     optimizer,scheduler,loss_fn=training_modules(model,n_epochs,batch_size,X_train)
     y_val=torch.tensor(y_val,dtype=torch.long)
     for epoch in range(n_epochs):
         batch_losses=[]
+        batch_accuracies=[]
         model.train()
         for i in range(0,len(X_train),batch_size):
             batch_X_train=X_train[i:i+batch_size]
@@ -93,26 +100,33 @@ def training(model,X_train,y_train,X_val,y_val,n_epochs=5,batch_size=32):
             optimizer.step()
             scheduler.step()
             batch_losses.append(loss.item())
-        epoch_loss=np.mean(batch_losses)  
+            _,pred=torch.max(logits,dim=1)
+            train_accuracy=((batch_y_train==pred).sum())/len(batch_y_train)
+            batch_accuracies.append(train_accuracy)
+        epoch_loss=np.mean(batch_losses)
+        epoch_accuracy=np.mean(batch_accuracies)
         print(f"Epoch {epoch} :")
         print(f"The training loss is {epoch_loss}")
+        print(f"The training accuracy is {epoch_accuracy}")
         
         with torch.no_grad():
             model.eval()
             logits_val=model(list(X_val[:,0]),list(X_val[:,1]),batch_size=len(X_val))
             val_loss=loss_fn(logits_val,y_val)
+            _,pred_val=torch.max(logits_val,dim=1)
+            val_accuracy=((pred_val==y_val).sum())/len(y_val)
         
         print(f"The validation loss is {val_loss}")
+        print(f"The validation accuracy is {val_accuracy}")
         print("------------------------")
+        
         
 
 model=CustomSbertModel("all-MiniLM-L6-v2",2)
 model=freezing(model,6)
 X_train,y_train,X_val,y_val,X_test,y_test=dataset_preparation(array)
-training(model,X_train,y_train,X_val,y_val,n_epochs=5,batch_size=32)         
-        
-        
-        
+training(model,X_train,y_train,X_val,y_val,n_epochs=5,batch_size=32)        
+
         
         
     
