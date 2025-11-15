@@ -29,5 +29,4 @@ class SBERTPairClassifier(nn.Module):
             x = nn.functional.relu(layer(x))
             x = nn.functional.dropout(x, p = self.dropout)
         logits = self.layers[-1](x)
-
         return logits
