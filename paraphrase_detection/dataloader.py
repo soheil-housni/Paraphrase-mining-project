@@ -11,5 +11,5 @@ class TextPairDataset(Dataset):
     
     def __getitem__(self, idx : int):
         s1, s2 = self.sentences[idx]
-        label = self.labels[idx]
-        return s1, s2, label
+        label = self.labels[idx][0]
+        return (s1, s2), label

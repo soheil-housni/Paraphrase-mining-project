@@ -18,7 +18,7 @@ class Train():
                  train_dataloader : DataLoader,
                  val_dataloader : DataLoader
                  ) -> None:
-        self.model = self.freeze_layers(model, n_freeze)
+        self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.criterion = criterion
@@ -26,6 +26,9 @@ class Train():
         self.epochs = epochs
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
+
+        # Freeze first n layer of model during training
+        self.freeze_layers(n_freeze)
 
     def freeze_layers(self, n_freeze : int) -> None:
         for i in range(n_freeze):
@@ -43,19 +46,20 @@ class Train():
         best_params = None
 
         for epoch in range(self.epochs):
+            print(f'EPOCH: {epoch}')
             self.model.to(self.device)
 
             self.model.train()
             train_batch_loss = []
+            all_train_preds = []
+            all_train_labels = []
             for train_X_batch, train_y_batch in self.train_dataloader:
-                train_X_batch.to(self.device)
-                train_y_batch.to(self.device)
-
+                train_X_batch = np.array(train_X_batch).T
+                train_y_batch = train_y_batch.to(self.device)
                 train_x0 = train_X_batch[:,0]
                 train_x1 = train_X_batch[:,1]
                 logits = self.model(train_x0, train_x1)
                 loss = self.criterion(logits, train_y_batch)
-
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -70,13 +74,13 @@ class Train():
             all_val_preds = []
             all_val_labels = []
             for val_X_batch, val_y_batch in self.val_dataloader:
-                val_X_batch.to(self.device)
-                val_y_batch.to(self.device)
+                val_X_batch = np.array(val_X_batch).T
+                val_y_batch = val_y_batch.to(self.device)
                 with torch.no_grad():
                     val_x0 = val_X_batch[:,0]
                     val_x1 = val_X_batch[:,1]
                     logits = self.model(val_x0, val_x1)
-                    loss = self.critetion(logits, val_y_batch)
+                    loss = self.criterion(logits, val_y_batch)
 
                     val_batch_loss.append(loss)
                     all_val_preds.append(logits.argmax(dim=1).cpu())
@@ -87,15 +91,15 @@ class Train():
             all_val_preds = torch.cat(all_val_preds)
             all_val_labels = torch.cat(all_val_labels)
             
-            avg_batch_train_loss[epoch] = np.mean(train_batch_loss)
-            avg_batch_val_loss[epoch] = np.mean(val_batch_loss)
+            avg_batch_train_loss[epoch] = np.mean([loss.cpu().item() for loss in train_batch_loss])
+            avg_batch_val_loss[epoch] = np.mean([loss.cpu().item() for loss in val_batch_loss])
 
             epoch_train_acc[epoch] = accuracy_score(all_train_labels, all_train_preds)
             epoch_val_acc[epoch] = accuracy_score(all_val_labels, all_val_preds)
             epoch_val_f1[epoch] = f1_score(all_val_labels, all_val_preds, average = 'macro')
 
-            if  f1_score >= best_model_f1:
-                best_model_f1 = epoch_val_f1
+            if  epoch_val_f1[epoch] >= best_model_f1:
+                best_model_f1 = epoch_val_f1[epoch]
                 best_params = self.model.state_dict()
 
             logger.info(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
