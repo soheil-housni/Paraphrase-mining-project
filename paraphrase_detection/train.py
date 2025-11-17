@@ -33,7 +33,7 @@ class Train():
     def freeze_layers(self, n_freeze : int) -> None:
         for i in range(n_freeze):
             for param in self.model.sbert[0].auto_model.encoder.layer[i].parameters():
-                param.requires_grad = True
+                param.requires_grad = False
 
     def run_training_loop(self) -> tuple[dict, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         avg_batch_train_loss = np.zeros(self.epochs)
