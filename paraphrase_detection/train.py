@@ -32,6 +32,8 @@ class Train():
         # Freeze first n layer of model during training
         if sbert_trainable:
             self.freeze_layers(n_freeze)
+            for param in self.model.sbert[0].auto_model.embeddings.parameters():
+                print(param.requires_grad)
 
     def freeze_layers(self, n_freeze : int) -> None:
         for param in self.model.sbert[0].auto_model.embeddings.parameters():
@@ -68,7 +70,7 @@ class Train():
                     train_x0=train_X_batch[0]
                     train_x0={k:v.to(self.device) for k,v in train_x0.items()}
                     train_x1=train_X_batch[1]
-                    train_x0={k:v.to(self.device) for k,v in train_x1.items()}
+                    train_x1={k:v.to(self.device) for k,v in train_x1.items()}
 
                 train_y_batch = train_y_batch.to(self.device)
                 logits = self.model(train_x0, train_x1)
@@ -94,9 +96,9 @@ class Train():
                         val_x0 = val_X_batch[:,0].tolist()
                         val_x1 = val_X_batch[:,1].tolist()
                     else:
-                        val_x0=train_X_batch[0]
+                        val_x0=val_X_batch[0]
                         val_x0={k:v.to(self.device) for k,v in val_x0.items()}
-                        val_x1=train_X_batch[1]
+                        val_x1=val_X_batch[1]
                         val_x1={k:v.to(self.device) for k,v in val_x1.items()}
                     logits = self.model(val_x0, val_x1)
                     loss = self.criterion(logits, val_y_batch)

@@ -23,14 +23,16 @@ class trainable_sbert_SBERTPairClassifier(nn.Module):
         self.layers = nn.ModuleList(layers)
         
     def forward(self, x0 : np.ndarray, x1 : np.ndarray):
-        transformed_x0=self.sbert[0].auto_model(**x0)
-        transformed_x1=self.sbert[0].auto_model(**x1)
-        pooled_x0=self.sbert[1]({"token_embeddings":transformed_x0[0], "attention_mask":x0["attention_mask"]})
-        pooled_x1=self.sbert[1]({"token_embeddings":transformed_x1[0], "attention_mask":x1["attention_mask"]})
-        normalized_x0=self.sbert[2](pooled_x0)
-        normalized_x1=self.sbert[2](pooled_x1)
-        emb_x0=normalized_x0["sentence_embedding"]
-        emb_x1=normalized_x1["sentence_embedding"]
+        #transformed_x0=self.sbert[0].auto_model(**x0)
+        #transformed_x1=self.sbert[0].auto_model(**x1)
+        #pooled_x0=self.sbert[1]({"token_embeddings":transformed_x0[0], "attention_mask":x0["attention_mask"]})
+        #pooled_x1=self.sbert[1]({"token_embeddings":transformed_x1[0], "attention_mask":x1["attention_mask"]})
+        #normalized_x0=self.sbert[2](pooled_x0)
+        #normalized_x1=self.sbert[2](pooled_x1)
+        #emb_x0=normalized_x0["sentence_embedding"]
+        #emb_x1=normalized_x1["sentence_embedding"]
+        emb_x0=self.sbert(x0)["sentence_embedding"]
+        emb_x1=self.sbert(x1)["sentence_embedding"]
         abs_diff = torch.abs(emb_x0 - emb_x1)
         x = torch.cat([emb_x0, emb_x1, abs_diff], dim=1)
         for layer in self.layers[:-1]:
