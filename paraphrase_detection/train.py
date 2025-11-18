@@ -16,7 +16,8 @@ class Train():
                  n_freeze : int,
                  epochs : int,
                  train_dataloader : DataLoader,
-                 val_dataloader : DataLoader
+                 val_dataloader : DataLoader,
+                 sbert_trainable:bool = False
                  ) -> None:
         self.model = model
         self.optimizer = optimizer
@@ -26,11 +27,17 @@ class Train():
         self.epochs = epochs
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
+        self.sbert_trainable=sbert_trainable
 
         # Freeze first n layer of model during training
-        self.freeze_layers(n_freeze)
+        if sbert_trainable:
+            self.freeze_layers(n_freeze)
+            for param in self.model.sbert[0].auto_model.embeddings.parameters():
+                print(param.requires_grad)
 
     def freeze_layers(self, n_freeze : int) -> None:
+        for param in self.model.sbert[0].auto_model.embeddings.parameters():
+            param.requires_grad=False
         for i in range(n_freeze):
             for param in self.model.sbert[0].auto_model.encoder.layer[i].parameters():
                 param.requires_grad = False
@@ -54,10 +61,18 @@ class Train():
             all_train_preds = []
             all_train_labels = []
             for train_X_batch, train_y_batch in self.train_dataloader:
-                train_X_batch = np.array(train_X_batch).T
+
+                if not self.sbert_trainable:
+                    train_X_batch = np.array(train_X_batch).T
+                    train_x0 = train_X_batch[:,0].tolist()
+                    train_x1 = train_X_batch[:,1].tolist()
+                else:
+                    train_x0=train_X_batch[0]
+                    train_x0={k:v.to(self.device) for k,v in train_x0.items()}
+                    train_x1=train_X_batch[1]
+                    train_x1={k:v.to(self.device) for k,v in train_x1.items()}
+
                 train_y_batch = train_y_batch.to(self.device)
-                train_x0 = train_X_batch[:,0]
-                train_x1 = train_X_batch[:,1]
                 logits = self.model(train_x0, train_x1)
                 loss = self.criterion(logits, train_y_batch)
                 self.optimizer.zero_grad()
@@ -77,8 +92,14 @@ class Train():
                 val_X_batch = np.array(val_X_batch).T
                 val_y_batch = val_y_batch.to(self.device)
                 with torch.no_grad():
-                    val_x0 = val_X_batch[:,0]
-                    val_x1 = val_X_batch[:,1]
+                    if not self.sbert_trainable:
+                        val_x0 = val_X_batch[:,0].tolist()
+                        val_x1 = val_X_batch[:,1].tolist()
+                    else:
+                        val_x0=val_X_batch[0]
+                        val_x0={k:v.to(self.device) for k,v in val_x0.items()}
+                        val_x1=val_X_batch[1]
+                        val_x1={k:v.to(self.device) for k,v in val_x1.items()}
                     logits = self.model(val_x0, val_x1)
                     loss = self.criterion(logits, val_y_batch)
 
