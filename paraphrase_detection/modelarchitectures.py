@@ -36,7 +36,7 @@ class trainable_sbert_SBERTPairClassifier(nn.Module):
         abs_diff = torch.abs(emb_x0 - emb_x1)
         x = torch.cat([emb_x0, emb_x1, abs_diff], dim=1)
         for layer in self.layers[:-1]:
-            x = nn.functional.relu(layer(x))
+            x = nn.functional.gelu(layer(x))
             x = nn.functional.dropout(x, p = self.dropout, training=self.training)
         logits = self.layers[-1](x)
         return logits
@@ -64,7 +64,7 @@ class fixed_sbert_SBERTPairClassifier(nn.Module):
         abs_diff = torch.abs(emb_x0 - emb_x1)
         x = torch.cat([emb_x0, emb_x1, abs_diff], dim=1)
         for layer in self.layers[:-1]:
-            x = nn.functional.relu(layer(x))
+            x = nn.functional.gelu(layer(x))
             x = nn.functional.dropout(x, p = self.dropout, training=self.training)
         logits = self.layers[-1](x)
         return logits
