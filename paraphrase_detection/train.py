@@ -17,7 +17,7 @@ class Train():
                  epochs : int,
                  train_dataloader : DataLoader,
                  val_dataloader : DataLoader,
-                 sbert_trainable:bool = False
+                 sbert_trainable : bool = False
                  ) -> None:
         self.model = model
         self.optimizer = optimizer
