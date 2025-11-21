@@ -1,3 +1,2 @@
-import sys 
+from loguru import logger
 
-print(sys.version)

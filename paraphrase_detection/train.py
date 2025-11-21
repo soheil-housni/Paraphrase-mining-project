@@ -7,126 +7,261 @@ from loguru import logger
 from torch.optim.lr_scheduler import _LRScheduler
 
 class Train():
-    def __init__(self,
-                 model : torch.nn.Module,
-                 optimizer : torch.optim,
-                 scheduler : _LRScheduler,
-                 criterion : torch.nn, 
-                 device : torch.device,
-                 n_freeze : int,
-                 epochs : int,
-                 train_dataloader : DataLoader,
-                 val_dataloader : DataLoader,
-                 sbert_trainable : bool = False
-                 ) -> None:
-        self.model = model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
-        self.criterion = criterion
-        self.device = device 
-        self.epochs = epochs
-        self.train_dataloader = train_dataloader
-        self.val_dataloader = val_dataloader
-        self.sbert_trainable=sbert_trainable
+    class Classifier():
+        def __init__(self,
+                    model : torch.nn.Module,
+                    optimizer : torch.optim,
+                    scheduler : _LRScheduler,
+                    criterion : torch.nn, 
+                    device : torch.device,
+                    n_freeze : int,
+                    epochs : int,
+                    train_dataloader : DataLoader,
+                    val_dataloader : DataLoader,
+                    sbert_trainable : bool = False
+                    ) -> None:
+            self.model = model
+            self.optimizer = optimizer
+            self.scheduler = scheduler
+            self.criterion = criterion
+            self.device = device 
+            self.epochs = epochs
+            self.train_dataloader = train_dataloader
+            self.val_dataloader = val_dataloader
+            self.sbert_trainable = sbert_trainable
 
-        # Freeze first n layer of model during training
-        if sbert_trainable:
-            self.freeze_layers(n_freeze)
+            # Freeze first n layer of model during training
+            if sbert_trainable:
+                self.freeze_layers(n_freeze)
+                for param in self.model.sbert[0].auto_model.embeddings.parameters():
+                    print(param.requires_grad)
+                for layer in self.model.sbert[0].auto_model.encoder:
+                    for param in layer.parameters():
+                        print(param.requires_grad)
+
+        def freeze_layers(self, n_freeze : int) -> None:
             for param in self.model.sbert[0].auto_model.embeddings.parameters():
-                print(param.requires_grad)
+                param.requires_grad=False
+            for i in range(n_freeze):
+                for param in self.model.sbert[0].auto_model.encoder.layer[i].parameters():
+                    param.requires_grad = False
 
-    def freeze_layers(self, n_freeze : int) -> None:
-        for param in self.model.sbert[0].auto_model.embeddings.parameters():
-            param.requires_grad=False
-        for i in range(n_freeze):
-            for param in self.model.sbert[0].auto_model.encoder.layer[i].parameters():
-                param.requires_grad = False
+        def run_training_loop(self) -> tuple[dict, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+            avg_batch_train_loss = np.zeros(self.epochs)
+            avg_batch_val_loss = np.zeros(self.epochs)
+            epoch_train_acc = np.zeros(self.epochs)
+            epoch_val_acc = np.zeros(self.epochs)
+            epoch_val_f1 = np.zeros(self.epochs)
 
-    def run_training_loop(self) -> tuple[dict, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        avg_batch_train_loss = np.zeros(self.epochs)
-        avg_batch_val_loss = np.zeros(self.epochs)
-        epoch_train_acc = np.zeros(self.epochs)
-        epoch_val_acc = np.zeros(self.epochs)
-        epoch_val_f1 = np.zeros(self.epochs)
+            best_model_f1 = 0
+            best_params = None
 
-        best_model_f1 = 0
-        best_params = None
+            for epoch in range(self.epochs):
+                print(f'EPOCH: {epoch}')
+                self.model.to(self.device)
 
-        for epoch in range(self.epochs):
-            print(f'EPOCH: {epoch}')
-            self.model.to(self.device)
+                self.model.train()
+                train_batch_loss = []
+                all_train_preds = []
+                all_train_labels = []
+                for train_X_batch, train_y_batch in self.train_dataloader:
 
-            self.model.train()
-            train_batch_loss = []
-            all_train_preds = []
-            all_train_labels = []
-            for train_X_batch, train_y_batch in self.train_dataloader:
-
-                if not self.sbert_trainable:
-                    train_X_batch = np.array(train_X_batch).T
-                    train_x0 = train_X_batch[:,0].tolist()
-                    train_x1 = train_X_batch[:,1].tolist()
-                else:
-                    train_x0=train_X_batch[0]
-                    train_x0={k:v.to(self.device) for k,v in train_x0.items()}
-                    train_x1=train_X_batch[1]
-                    train_x1={k:v.to(self.device) for k,v in train_x1.items()}
-
-                train_y_batch = train_y_batch.to(self.device)
-                logits = self.model(train_x0, train_x1)
-                loss = self.criterion(logits, train_y_batch)
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-                self.scheduler.step()
-
-                train_batch_loss.append(loss)
-                all_train_preds.append(logits.argmax(dim=1).cpu())
-                all_train_labels.append(train_y_batch.cpu())
-
-            self.model.eval()
-            val_batch_loss = []
-            all_val_preds = []
-            all_val_labels = []
-            for val_X_batch, val_y_batch in self.val_dataloader:
-                val_X_batch = np.array(val_X_batch).T
-                val_y_batch = val_y_batch.to(self.device)
-                with torch.no_grad():
                     if not self.sbert_trainable:
-                        val_x0 = val_X_batch[:,0].tolist()
-                        val_x1 = val_X_batch[:,1].tolist()
+                        train_X_batch = np.array(train_X_batch).T
+                        train_x0 = train_X_batch[:,0].tolist()
+                        train_x1 = train_X_batch[:,1].tolist()
                     else:
-                        val_x0=val_X_batch[0]
-                        val_x0={k:v.to(self.device) for k,v in val_x0.items()}
-                        val_x1=val_X_batch[1]
-                        val_x1={k:v.to(self.device) for k,v in val_x1.items()}
-                    logits = self.model(val_x0, val_x1)
-                    loss = self.criterion(logits, val_y_batch)
+                        train_x0 = train_X_batch[0]
+                        train_x0 = {k : v.to(self.device) for k, v in train_x0.items()}
+                        train_x1 = train_X_batch[1]
+                        train_x1 = {k : v.to(self.device) for k, v in train_x1.items()}
 
-                    val_batch_loss.append(loss)
-                    all_val_preds.append(logits.argmax(dim=1).cpu())
-                    all_val_labels.append(val_y_batch.cpu())
-            
-            all_train_preds = torch.cat(all_train_preds)
-            all_train_labels = torch.cat(all_train_labels)
-            all_val_preds = torch.cat(all_val_preds)
-            all_val_labels = torch.cat(all_val_labels)
-            
-            avg_batch_train_loss[epoch] = np.mean([loss.cpu().item() for loss in train_batch_loss])
-            avg_batch_val_loss[epoch] = np.mean([loss.cpu().item() for loss in val_batch_loss])
+                    train_y_batch = train_y_batch.to(self.device)
+                    logits = self.model(train_x0, train_x1)
+                    loss = self.criterion(logits, train_y_batch)
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    self.optimizer.step()
+                    self.scheduler.step()
 
-            epoch_train_acc[epoch] = accuracy_score(all_train_labels, all_train_preds)
-            epoch_val_acc[epoch] = accuracy_score(all_val_labels, all_val_preds)
-            epoch_val_f1[epoch] = f1_score(all_val_labels, all_val_preds, average = 'macro')
+                    train_batch_loss.append(loss)
+                    all_train_preds.append(logits.argmax(dim=1).cpu())
+                    all_train_labels.append(train_y_batch.cpu())
 
-            if  epoch_val_f1[epoch] >= best_model_f1:
-                best_model_f1 = epoch_val_f1[epoch]
-                best_params = self.model.state_dict()
+                self.model.eval()
+                val_batch_loss = []
+                all_val_preds = []
+                all_val_labels = []
+                for val_X_batch, val_y_batch in self.val_dataloader:
+                    val_X_batch = np.array(val_X_batch).T
+                    val_y_batch = val_y_batch.to(self.device)
+                    with torch.no_grad():
+                        if not self.sbert_trainable:
+                            val_x0 = val_X_batch[:,0].tolist()
+                            val_x1 = val_X_batch[:,1].tolist()
+                        else:
+                            val_x0 = val_X_batch[0]
+                            val_x0 = {k : v.to(self.device) for k, v in val_x0.items()}
+                            val_x1 = val_X_batch[1]
+                            val_x1 = {k : v.to(self.device) for k, v in val_x1.items()}
+                        logits = self.model(val_x0, val_x1)
+                        loss = self.criterion(logits, val_y_batch)
 
-            logger.info(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
-            logger.info(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
-            logger.info(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
-            logger.info(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
-            logger.info(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
+                        val_batch_loss.append(loss)
+                        all_val_preds.append(logits.argmax(dim=1).cpu())
+                        all_val_labels.append(val_y_batch.cpu())
+                
+                all_train_preds = torch.cat(all_train_preds)
+                all_train_labels = torch.cat(all_train_labels)
+                all_val_preds = torch.cat(all_val_preds)
+                all_val_labels = torch.cat(all_val_labels)
+                
+                avg_batch_train_loss[epoch] = np.mean([loss.cpu().item() for loss in train_batch_loss])
+                avg_batch_val_loss[epoch] = np.mean([loss.cpu().item() for loss in val_batch_loss])
 
-        return best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1
+                epoch_train_acc[epoch] = accuracy_score(all_train_labels, all_train_preds)
+                epoch_val_acc[epoch] = accuracy_score(all_val_labels, all_val_preds)
+                epoch_val_f1[epoch] = f1_score(all_val_labels, all_val_preds, average = 'macro')
+
+                if  epoch_val_f1[epoch] >= best_model_f1:
+                    best_model_f1 = epoch_val_f1[epoch]
+                    best_params = self.model.state_dict()
+
+                logger.info(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
+                logger.info(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
+                logger.info(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
+                logger.info(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
+                logger.info(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
+
+            return best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1
+    
+    class CosSimClassifier():
+        def __init__(self,
+                    model : torch.nn.Module,
+                    optimizer : torch.optim,
+                    scheduler : _LRScheduler,
+                    criterion : torch.nn, 
+                    device : torch.device,
+                    n_freeze : int,
+                    epochs : int,
+                    train_dataloader : DataLoader,
+                    val_dataloader : DataLoader,
+                    sbert_trainable : bool = False
+                    ) -> None:
+            self.model = model
+            self.optimizer = optimizer
+            self.scheduler = scheduler
+            self.criterion = criterion
+            self.device = device 
+            self.epochs = epochs
+            self.train_dataloader = train_dataloader
+            self.val_dataloader = val_dataloader
+            self.sbert_trainable = sbert_trainable
+
+            # Freeze first n layer of model during training
+            if sbert_trainable:
+                self.freeze_layers(n_freeze)
+                for param in self.model.sbert[0].auto_model.embeddings.parameters():
+                    print(param.requires_grad)
+
+        def freeze_layers(self, n_freeze : int) -> None:
+            for param in self.model.sbert[0].auto_model.embeddings.parameters():
+                param.requires_grad=False
+            for i in range(n_freeze):
+                for param in self.model.sbert[0].auto_model.encoder.layer[i].parameters():
+                    param.requires_grad = False
+
+        def run_training_loop(self) -> tuple[dict, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+            avg_batch_train_loss = np.zeros(self.epochs)
+            avg_batch_val_loss = np.zeros(self.epochs)
+            epoch_train_acc=np.zeros(self.epochs)
+            epoch_val_acc=np.zeros(self.epochs)
+            epoch_val_f1=np.zeros(self.epochs)
+            cosines_train_set=[]
+            thresholds_train_set=[]
+
+            best_model_f1 = 0
+            best_params = None
+
+            for epoch in range(self.epochs):
+                print(f'EPOCH: {epoch}')
+                self.model.to(self.device)
+
+                self.model.train()
+                train_batch_loss = []
+                all_train_preds = []
+                all_train_labels = []
+                for train_X_batch, train_y_batch in self.train_dataloader:
+
+                    if not self.sbert_trainable:
+                        train_X_batch = np.array(train_X_batch).T
+                        train_x0 = train_X_batch[:,0].tolist()
+                        train_x1 = train_X_batch[:,1].tolist()
+                    else:
+                        train_x0 = train_X_batch[0]
+                        train_x0 = {k:v.to(self.device) for k, v in train_x0.items()}
+                        train_x1 = train_X_batch[1]
+                        train_x1 = {k:v.to(self.device) for k, v in train_x1.items()}
+
+                    train_y_batch = train_y_batch.float().to(self.device)
+                    outputs,thresholds,cos_sims = self.model(train_x0, train_x1)
+                    outputs=outputs.view(-1)
+                    loss = self.criterion(outputs, train_y_batch)
+                    self.optimizer.zero_grad()  
+                    loss.backward()
+                    self.optimizer.step()
+                    self.scheduler.step()
+                    preds = (outputs >= 0.5).long()
+                    train_batch_loss.append(loss)
+                    all_train_preds.append(preds.cpu())
+                    all_train_labels.append(train_y_batch.cpu())
+                    if epoch == self.epochs-1:
+                        cosines_train_set.append(cos_sims)
+                        thresholds_train_set.append(thresholds)
+
+                self.model.eval()
+                val_batch_loss = []
+                all_val_preds = []
+                all_val_labels = []
+                for val_X_batch, val_y_batch in self.val_dataloader:
+                    val_X_batch = np.array(val_X_batch).T
+                    val_y_batch = val_y_batch.float().to(self.device)
+                    with torch.no_grad():
+                        if not self.sbert_trainable:
+                            val_x0 = val_X_batch[:,0].tolist()
+                            val_x1 = val_X_batch[:,1].tolist()
+                        else:
+                            val_x0 = val_X_batch[0]
+                            val_x0 = {k : v.to(self.device) for k, v in val_x0.items()}
+                            val_x1 = val_X_batch[1]
+                            val_x1 = {k : v.to(self.device) for k, v in val_x1.items()}
+                        outputs, thresholds, cos_sims = self.model(val_x0, val_x1)
+                        outputs = outputs.view(-1)
+                        val_y_batch = val_y_batch
+                        loss = self.criterion(outputs, val_y_batch)
+                        val_batch_loss.append(loss)
+
+                        preds = (outputs >= 0.5).long()
+                        all_val_preds.append(preds.cpu())
+                        all_val_labels.append(val_y_batch.cpu())
+                
+                all_train_preds = torch.cat(all_train_preds).long()
+                all_train_labels = torch.cat(all_train_labels).long()
+                all_val_preds = torch.cat(all_val_preds).long()
+                all_val_labels = torch.cat(all_val_labels).long()
+                
+                avg_batch_train_loss[epoch] = np.mean([loss.cpu().item() for loss in train_batch_loss])
+                avg_batch_val_loss[epoch] = np.mean([loss.cpu().item() for loss in val_batch_loss])
+                
+                epoch_train_acc[epoch] = accuracy_score(all_train_labels, all_train_preds.detach())
+                epoch_val_acc[epoch] = accuracy_score(all_val_labels, all_val_preds.detach())
+                epoch_val_f1[epoch] = f1_score(all_val_labels, all_val_preds.detach(), average = 'macro')
+
+                logger.info(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
+                logger.info(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
+                logger.info(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
+                logger.info(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
+                logger.info(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
+            cosines_train_set = torch.cat(cosines_train_set, dim = 0)
+            thresholds_train_set = torch.cat(thresholds_train_set, dim = 0)
+            return best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set
