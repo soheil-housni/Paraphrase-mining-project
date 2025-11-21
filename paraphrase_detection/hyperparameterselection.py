@@ -34,7 +34,7 @@ class BOSearchTrain():
 
         self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
-    def fit_GP(self, X : torch.Tensor, Y : torch.Tensor):
+    def fit_GP(self, X : torch.Tensor, Y : torch.Tensor) -> SingleTaskGP:
         X = X.double()
         Y = Y.double()
 
@@ -45,6 +45,8 @@ class BOSearchTrain():
     
     def sample_from_space(self):
         return self.bounds[0, :] + (self.bounds[1, :] - self.bounds[2, :]) * torch.rand(self.n_init_samples, self.bounds.shape[1])
+
+    def sample_set(self, model : SingleTaskGP, X_observed : torch.Tensor, Y_observed : torch.Tensor, ):
 
     def train_eval(self):
         
