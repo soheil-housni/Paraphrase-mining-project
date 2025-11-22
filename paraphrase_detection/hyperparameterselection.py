@@ -62,7 +62,8 @@ class BOSearchTrain():
                  n_iterations : int,
                  fixed : bool,
                  cos_similarity : bool,
-                 epochs : int
+                 epochs : int,
+                 patience : int
                  ) -> None:
         """
         Inializes the arguements required for the BO loop.
@@ -102,6 +103,7 @@ class BOSearchTrain():
         self.epochs = epochs
         self.optimizer = optimizer
         self.scheduler = scheduler
+        self.patience = patience
 
         self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
@@ -223,6 +225,7 @@ class BOSearchTrain():
                 self.epochs,
                 train_loader,
                 val_loader,
+                self.patience,
                 self.sbert_model
             )
             results = trainer.run_training_loop()
@@ -238,6 +241,7 @@ class BOSearchTrain():
                 self.epochs,
                 train_loader,
                 val_loader,
+                self.patience,
                 self.sbert_model
             )
             results = trainer.run_training_loop()
@@ -339,7 +343,7 @@ class BOSearchTrain():
             if len(best_vals) > BOSearchTrain.EARLY_STOP_WINDOW:
                 window = best_vals[-BOSearchTrain.EARLY_STOP_WINDOW:]
                 if max(window) - min(window) < BOSearchTrain.EARLY_STOP_THRESHOLD:
-                    logger.stop(f'EARLY STOP in Bayesian Optimization loop after {n} loop')
+                    logger.info(f'EARLY STOP in Bayesian Optimization loop after {n} loop')
                     break
 
         # Saves best model, HP samples with F1 scores and metrics of best performing model
