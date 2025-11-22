@@ -33,6 +33,7 @@ class Train():
         self.val_dataloader = val_dataloader
         self.sbert_trainable = sbert_trainable
         self.patience = patience
+        self.model.to(self.device)
 
         # Determine from model if we're using CrossEntropy or CosSimilarity as a model architecture
         if isinstance(model, PairClassifier.CrossEntropy):
@@ -45,8 +46,8 @@ class Train():
         # Freeze first n layer of model during training
         if sbert_trainable:
             self.freeze_layers(n_freeze)
-            for param in self.model.sbert[0].auto_model.embeddings.parameters():
-                print(param.requires_grad)
+            # for param in self.model.sbert[0].auto_model.embeddings.parameters():
+            #     print(param.requires_grad)
 
     def freeze_layers(self, n_freeze : int) -> None:
         for param in self.model.sbert[0].auto_model.embeddings.parameters():
@@ -73,7 +74,6 @@ class Train():
 
         for epoch in range(self.epochs):
             print(f'EPOCH: {epoch}')
-            self.model.to(self.device)
 
             self.model.train()
             train_batch_loss = []
@@ -168,11 +168,11 @@ class Train():
                 best_model_f1 = epoch_val_f1[epoch]
                 best_params = self.model.state_dict()
 
-            logger.trace(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
-            logger.trace(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
-            logger.trace(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
-            logger.trace(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
-            logger.trace(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
+            logger.info(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
+            logger.info(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
+            logger.info(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
+            logger.info(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
+            logger.info(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
 
             avg_val_loss = np.mean([loss.cpu().item() for loss in val_batch_loss])
 
@@ -315,11 +315,11 @@ class Train():
     #                 best_model_f1 = epoch_val_f1[epoch]
     #                 best_params = self.model.state_dict()
 
-    #             logger.trace(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
-    #             logger.trace(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
-    #             logger.trace(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
-    #             logger.trace(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
-    #             logger.trace(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
+    #             logger.info(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
+    #             logger.info(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
+    #             logger.info(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
+    #             logger.info(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
+    #             logger.info(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
 
     #             avg_val_loss = np.mean([loss.cpu().item() for loss in val_batch_loss])
 
@@ -472,11 +472,11 @@ class Train():
     #                 best_model_f1 = epoch_val_f1[epoch]
     #                 best_params = self.model.state_dict()
 
-    #             logger.trace(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
-    #             logger.trace(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
-    #             logger.trace(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
-    #             logger.trace(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
-    #             logger.trace(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
+    #             logger.info(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
+    #             logger.info(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
+    #             logger.info(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
+    #             logger.info(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
+    #             logger.info(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
 
     #             avg_val_loss = np.mean([loss.cpu().item() for loss in val_batch_loss])
 

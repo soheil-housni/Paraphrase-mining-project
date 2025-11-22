@@ -17,13 +17,15 @@ class PairClassifier():
             EMB_DIM = model.get_sentence_embedding_dimension()
 
             hidden_sizes = fc_sizes[:use_n_layers]
-            self.layers = []
-            self.layers.append(nn.Linear(3 * EMB_DIM, hidden_sizes[0]))
+            layers = []
+            layers.append(nn.Linear(3 * EMB_DIM, hidden_sizes[0]))
             norm_layers = [nn.LayerNorm(fc_sizes[0])]
             for i in range(use_n_layers - 1):
-                self.layers.append(nn.Linear(hidden_sizes[i], hidden_sizes[i + 1]))
+                layers.append(nn.Linear(hidden_sizes[i], hidden_sizes[i + 1]))
                 norm_layers.append(nn.LayerNorm(fc_sizes[i + 1]))
-            self.layers.append(nn.Linear(hidden_sizes[-1], OUTPUT_DIM))
+            layers.append(nn.Linear(hidden_sizes[-1], OUTPUT_DIM))
+
+            self.layers = nn.ModuleList(layers)
             self.norm_layers = nn.ModuleList(norm_layers)
 
         def forward(self, x0 : np.ndarray, x1 : np.ndarray):
@@ -38,11 +40,10 @@ class PairClassifier():
             emb_x1 = nn.functional.normalize(emb_x1)
             abs_diff = torch.abs(emb_x0 - emb_x1)
             x = torch.cat([emb_x0, emb_x1, abs_diff], dim=1)
-            for layer in self.layers[:-1]:
-                x = self.layers[layer](x)
-                x = self.norm_layers[layer](x)
-                x = nn.functional.gelu(layer(x))
-                x = nn.functional.dropout(x, p = self.dropout, training = self.training)
+            for layer, norm in zip(self.layers[:-1], self.norm_layers):
+                x = layer(x)
+                x = norm(x)
+                x = nn.functional.gelu(x)
                 x = nn.functional.dropout(x, p = self.dropout, training = self.training)
             logits = self.layers[-1](x)
             return logits
@@ -83,10 +84,12 @@ class PairClassifier():
             cos_sim = self.cosine_similarity(emb_x0, emb_x1).unsqueeze(1)
             abs_diff = torch.abs(emb_x0 - emb_x1)
             x = torch.cat([emb_x0, emb_x1, abs_diff], dim=1)
-            for layer in self.layers[:-1]:
-                x = nn.functional.gelu(layer(x))
-                x = nn.functional.dropout(x, p = self.dropout, training=self.training)
-            threshold = self.layers[-1](x)
+            for layer, norm in zip(self.layers[:-1], self.norm_layers):
+                x = layer(x)
+                x = norm(x)
+                x = nn.functional.gelu(x)
+                x = nn.functional.dropout(x, p = self.dropout, training = self.training)
+            output = self.layers[-1](x)
             threshold = nn.functional.tanh(threshold)
             output = nn.functional.sigmoid(cos_sim - threshold)
             return (output, threshold, cos_sim)

@@ -33,7 +33,6 @@ class HyperParameters:
     fc1: int
     fc2: int
     fc3: int
-    fc4: int
 
 class BOSearchTrain():
     """
@@ -124,14 +123,13 @@ class BOSearchTrain():
         hyperparams = HyperParameters(
             lr = float(hp[self.hp_index["lr"]]),
             weight_decay = float(hp[self.hp_index["weight_decay"]]),
-            dropout = float(hp[self.hp_index["dropout"]]),
+            dropout = float(hp[self.hp_index["dropout_p"]]),
             n_freeze = int(hp[self.hp_index["n_freeze"]]),
             batch_size = int(hp[self.hp_index["batch_size"]]),
             use_n_layers = int(hp[self.hp_index["use_n_layers"]]),
             fc1 = int(hp[self.hp_index["fc1"]]),
             fc2 = int(hp[self.hp_index["fc2"]]),
-            fc3 = int(hp[self.hp_index["fc3"]]),
-            fc4 = int(hp[self.hp_index["fc4"]]),
+            fc3 = int(hp[self.hp_index["fc3"]])
         )
         return hyperparams
     
@@ -150,20 +148,21 @@ class BOSearchTrain():
         Y_observed = torch.zeros(self.n_init_samples)
         self.init_hp_samples()
         hp = self.X_observed
+    
         for n in range(self.n_init_samples):
+            hp_n = hp[n, :]
 
             logger.info(f"Starting iteration {n}:\n"
-                        f"{[(name, hp[self.hp_index[name]].item()) for name in self.names]}")
+                        f"{[(name, hp_n[self.hp_index[name]].item()) for name in self.names]}")
 
-            hp_n = hp[n, :]
             results = self.train_for_hp_set(hp_n)
             if self.cos_similarity:
                 best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
             else:
                 best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set = results
             Y_observed[n] = np.max(epoch_val_f1)
-            logger.trace(f'Maximum validation F1 score: {np.max(epoch_val_f1)}')
-        logger.success(f'Finished initial fit of samples')
+            logger.info(f'Maximum validation F1 score: {np.max(epoch_val_f1)}')
+        logger.info(f'Finished initial fit of samples')
         self.Y_observed = Y_observed 
     
     def fit_GP(self) -> SingleTaskGP:
@@ -216,10 +215,13 @@ class BOSearchTrain():
         
         hp = self.tensor_to_hparams(hyperparams)
 
-        fc_sizes = [hp.fc1, hp.fc2, hp.fc3, hp.fc4]
+        fc_sizes = [hp.fc1, hp.fc2, hp.fc3]
         model, optimizer, scheduler, train_loader, val_loader = self.train_config(hp.lr, hp.weight_decay, fc_sizes, hp.use_n_layers, hp.dropout, hp.batch_size)
+
+        assert isinstance(hp.n_freeze, int), 'n_freeze must be int'
+
         if self.cos_similarity:
-            trainer = Train.CosSimClassifier(
+            trainer = Train(
                 model,
                 optimizer,
                 scheduler,
@@ -235,7 +237,7 @@ class BOSearchTrain():
             results = trainer.run_training_loop()
 
         else:
-            trainer = Train.Classifier(
+            trainer = Train(
                 model,
                 optimizer,
                 scheduler,
@@ -279,6 +281,14 @@ class BOSearchTrain():
         steps = self.epochs * self.X_train.shape[0] // batch_size
         n_warmup_steps = int(steps * BOSearchTrain.WARMUP_STEPS_RATIO)
 
+        assert isinstance(fc_sizes, list), 'fc_sizes must be list'
+        assert isinstance(use_n_layers, int), 'use_n_layers must be int'
+        assert isinstance(dropout, float), 'dropout must be float'
+        assert isinstance(dropout, float), 'dropout must be float'
+        assert isinstance(lr, float), 'dropout must be float'
+        assert isinstance(weight_decay, float), 'weight_decay must be float'
+        assert isinstance(batch_size, int), 'batch_size must be int'
+
         if self.cos_similarity:
             model = PairClassifier.CosSimilarity(self.sbert_model, fc_sizes, use_n_layers, self.device, self.fixed, dropout)
         else:
@@ -286,7 +296,7 @@ class BOSearchTrain():
 
         match self.optimizer:
             case Optimizer.ADAMW:
-                optimizer = torch.optim.AdamW(model = model.parameters(), lr = lr, weight_decay = weight_decay)
+                optimizer = torch.optim.AdamW(model.parameters(), lr = lr, weight_decay = weight_decay)
             case _:
                 raise(TypeError(f'{self.optimizer} is not a valid Optimizer'))
 
@@ -333,7 +343,7 @@ class BOSearchTrain():
             self.X_observed = torch.vstack((self.X_observed, hp_set))
             self.Y_observed = torch.hstack((self.Y_observed, y))
 
-            logger.trace(f'\n Maximum validation F1 score: {np.max(epoch_val_f1)} \n')
+            logger.info(f'\n Maximum validation F1 score: {np.max(epoch_val_f1)} \n')
             
             # Fit Surrogate Model to newly added data
             gp_model = self.fit_GP()
