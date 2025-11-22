@@ -35,7 +35,6 @@ class PairClassifier():
             else:
                 emb_x0 = self.sbert(x0)["sentence_embedding"].to(self.device)
                 emb_x1 = self.sbert(x1)["sentence_embedding"].to(self.device)
-                
             emb_x0 = nn.functional.normalize(emb_x0)
             emb_x1 = nn.functional.normalize(emb_x1)
             abs_diff = torch.abs(emb_x0 - emb_x1)

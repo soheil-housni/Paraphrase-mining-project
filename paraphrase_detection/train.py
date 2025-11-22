@@ -20,8 +20,7 @@ class Train():
                  epochs : int,
                  train_dataloader : DataLoader,
                  val_dataloader : DataLoader,
-                 patience : int,
-                 sbert_trainable : bool = False
+                 patience : int
                  ) -> None:
         self.model = model
         self.optimizer = optimizer
@@ -31,7 +30,7 @@ class Train():
         self.epochs = epochs
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
-        self.sbert_trainable = sbert_trainable
+        self.fixed = model.fixed
         self.patience = patience
         self.model.to(self.device)
 
@@ -44,7 +43,7 @@ class Train():
             raise TypeError(f'Unsupported model type {type(model)}')
         
         # Freeze first n layer of model during training
-        if sbert_trainable:
+        if self.fixed:
             self.freeze_layers(n_freeze)
             # for param in self.model.sbert[0].auto_model.embeddings.parameters():
             #     print(param.requires_grad)
@@ -80,11 +79,11 @@ class Train():
             all_train_preds = []
             all_train_labels = []
             for train_X_batch, train_y_batch in self.train_dataloader:
-
-                if not self.sbert_trainable:
+                if self.fixed:
                     train_X_batch = np.array(train_X_batch).T
                     train_x0 = train_X_batch[:,0].tolist()
                     train_x1 = train_X_batch[:,1].tolist()
+                    
                 else:
                     train_x0 = train_X_batch[0]
                     train_x0 = {k : v.to(self.device) for k, v in train_x0.items()}
@@ -122,16 +121,17 @@ class Train():
             for val_X_batch, val_y_batch in self.val_dataloader:
                 
                 with torch.no_grad():
-                    if not self.sbert_trainable:
+                    if self.fixed:
                         val_X_batch = np.array(val_X_batch).T
                         val_x0 = val_X_batch[:,0].tolist()
                         val_x1 = val_X_batch[:,1].tolist()
+                        
                     else:
                         val_x0 = val_X_batch[0]
                         val_x0 = {k : v.to(self.device) for k, v in val_x0.items()}
                         val_x1 = val_X_batch[1]
                         val_x1 = {k : v.to(self.device) for k, v in val_x1.items()}
-                    
+                        
                     val_y_batch = val_y_batch.to(self.device)
 
                     if self.is_cos_sim:
@@ -206,7 +206,7 @@ class Train():
     #                  train_dataloader : DataLoader,
     #                  val_dataloader : DataLoader,
     #                  patience : int,
-    #                  sbert_trainable : bool = False
+    #                  fixed:= False
     #                  ) -> None:
     #         self.model = model
     #         self.optimizer = optimizer
@@ -216,11 +216,11 @@ class Train():
     #         self.epochs = epochs
     #         self.train_dataloader = train_dataloader
     #         self.val_dataloader = val_dataloader
-    #         self.sbert_trainable = sbert_trainable
+    #         self.fixed::
     #         self.patience = patience
             
     #         # Freeze first n layer of model during training
-    #         if sbert_trainable:
+    #         if fixed:
     #             self.freeze_layers(n_freeze)
     #             for param in self.model.sbert[0].auto_model.embeddings.parameters():
     #                 print(param.requires_grad)
@@ -254,7 +254,7 @@ class Train():
     #             all_train_labels = []
     #             for train_X_batch, train_y_batch in self.train_dataloader:
 
-    #                 if not self.sbert_trainable:
+    #                 if not self.fixed:
     #                     train_X_batch = np.array(train_X_batch).T
     #                     train_x0 = train_X_batch[:,0].tolist()
     #                     train_x1 = train_X_batch[:,1].tolist()
@@ -284,7 +284,7 @@ class Train():
     #                 val_X_batch = np.array(val_X_batch).T
     #                 val_y_batch = val_y_batch.to(self.device)
     #                 with torch.no_grad():
-    #                     if not self.sbert_trainable:
+    #                     if not self.fixed:
     #                         val_x0 = val_X_batch[:,0].tolist()
     #                         val_x1 = val_X_batch[:,1].tolist()
     #                     else:
@@ -353,7 +353,7 @@ class Train():
     #                 train_dataloader : DataLoader,
     #                 val_dataloader : DataLoader,
     #                 patience : int,
-    #                 sbert_trainable : bool = False
+    #                 fixed:= False
     #                 ) -> None:
     #         self.model = model
     #         self.optimizer = optimizer
@@ -363,11 +363,11 @@ class Train():
     #         self.epochs = epochs
     #         self.train_dataloader = train_dataloader
     #         self.val_dataloader = val_dataloader
-    #         self.sbert_trainable = sbert_trainable
+    #         self.fixed::
     #         self.patience = patience
 
     #         # Freeze first n layer of model during training
-    #         if sbert_trainable:
+    #         if fixed:
     #             self.freeze_layers(n_freeze)
     #             for param in self.model.sbert[0].auto_model.embeddings.parameters():
     #                 print(param.requires_grad)
@@ -404,7 +404,7 @@ class Train():
 
     #             for train_X_batch, train_y_batch in self.train_dataloader:
 
-    #                 if not self.sbert_trainable:
+    #                 if not self.fixed:
     #                     train_X_batch = np.array(train_X_batch).T
     #                     train_x0 = train_X_batch[:,0].tolist()
     #                     train_x1 = train_X_batch[:,1].tolist()
@@ -438,7 +438,7 @@ class Train():
     #                 val_X_batch = np.array(val_X_batch).T
     #                 val_y_batch = val_y_batch.float().to(self.device)
     #                 with torch.no_grad():
-    #                     if not self.sbert_trainable:
+    #                     if not self.fixed:
     #                         val_x0 = val_X_batch[:,0].tolist()
     #                         val_x1 = val_X_batch[:,1].tolist()
     #                     else:

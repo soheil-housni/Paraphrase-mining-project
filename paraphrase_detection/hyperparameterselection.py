@@ -231,8 +231,7 @@ class BOSearchTrain():
                 self.epochs,
                 train_loader,
                 val_loader,
-                self.patience,
-                self.sbert_model
+                self.patience
             )
             results = trainer.run_training_loop()
 
@@ -247,8 +246,7 @@ class BOSearchTrain():
                 self.epochs,
                 train_loader,
                 val_loader,
-                self.patience,
-                self.sbert_model
+                self.patience
             )
             results = trainer.run_training_loop()
 
