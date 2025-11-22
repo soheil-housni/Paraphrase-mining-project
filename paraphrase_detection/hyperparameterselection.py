@@ -18,6 +18,7 @@ import numpy as np
 import torch
 from loguru import logger
 from transformers import get_linear_schedule_with_warmup
+from torch.optim.lr_scheduler import LRScheduler
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,6 +43,8 @@ class BOSearchTrain():
     NUM_RESTARTS = 5
     RAW_SAMPLES = 50
     WARMUP_STEPS_RATIO = 0.1
+    EARLY_STOP_THRESHOLD = 0.005
+    EARLY_STOP_WINDOW = 4
 
     def __init__(self,
                  bounds : torch.Tensor,
@@ -142,11 +145,12 @@ class BOSearchTrain():
         """        
         logger.info(f'Initial fit of GP for {self.n_init_samples} samples of hyperparameter sets \n')
         Y_observed = torch.zeros(self.n_init_samples)
-        hp = self.init_hp_samples()
+        self.init_hp_samples()
+        hp = self.X_observed
         for n in range(self.n_init_samples):
             logger.trace(f'Starting INIT iteration {n}:\n" f"{[(name, hp[n, idx]) for idx, name in enumerate(self.names)]}')
             hp_n = hp[n, :]
-            results = self.train_for_hp_set(hp_n, True)
+            results = self.train_for_hp_set(hp_n)
             if self.cos_similarity:
                 best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
             else:
@@ -167,6 +171,31 @@ class BOSearchTrain():
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
         fit_gpytorch_mll(mll)
         return model
+    
+    def sample_set(self, model : SingleTaskGP, n_candidates : int = 1) -> torch.Tensor:
+        """
+        Samples a candidate hyperparameter set based on the best Expected Improvement.
+
+        Args:
+            model (SingleTaskGP): Gaussian Process fit so far
+            n_candidates (int, optional): Number of candidate sets. Defaults to 1.
+
+        Returns:
+            torch.Tensor: Candidate set of hyperparameters
+        """        
+        best_f = self.Y_observed.max()
+        acq_fct = qExpectedImprovement(model = model, best_f = best_f)
+
+        acq_bounds = self.bounds.T.double()
+
+        canditates, _ = optimize_acqf(acq_function = acq_fct,
+                                      bounds = acq_bounds,
+                                      q = n_candidates,
+                                      num_restarts = BOSearchTrain.NUM_RESTARTS,
+                                      raw_samples = BOSearchTrain.RAW_SAMPLES,
+                                      return_best_only = True
+                                      )
+        return canditates
     
     def train_for_hp_set(self, hyperparams : torch.Tensor) -> tuple[Any, ...]:
         """
@@ -214,30 +243,6 @@ class BOSearchTrain():
             results = trainer.run_training_loop()
 
         return results
-        
-    def sample_set(self, model : SingleTaskGP, n_candidates : int = 1) -> torch.Tensor:
-        """
-        Samples a candidate hyperparameter set based on the best Expected Improvement.
-
-        Args:
-            model (SingleTaskGP): Gaussian Process fit so far
-            n_candidates (int, optional): Number of candidate sets. Defaults to 1.
-
-        Returns:
-            torch.Tensor: Candidate set of hyperparameters
-        """        
-        best_f = self.Y_observed.min()
-        acq_fct = qExpectedImprovement(model = model, best_f = best_f)
-
-        acq_bounds = self.bounds.T.double()
-
-        canditates, _ = optimize_acqf(acq_function = acq_fct,
-                                   bounds = acq_bounds,
-                                   q = n_candidates,
-                                   num_restarts = BOSearchTrain.NUM_RESTARTS,
-                                   raw_samples = BOSearchTrain.RAW_SAMPLES
-                                   )
-        return canditates
     
     def train_config(self,
                      lr : float,
@@ -246,7 +251,7 @@ class BOSearchTrain():
                      use_n_layers : int,
                      dropout : float,
                      batch_size : int
-                     ) -> tuple[PairClassifier, Optimizer, Scheduler, DataLoader, DataLoader]:
+                     ) -> tuple[PairClassifier, torch.optim.Optimizer, LRScheduler, DataLoader, DataLoader]:
         """
         Inializes the training configurations that are dependent on hyperparameters.
 
@@ -264,7 +269,7 @@ class BOSearchTrain():
             training data loader and validation data loader.
         """        
         steps = self.epochs * self.X_train.shape[0] // batch_size
-        n_warmup_steps = steps * BOSearchTrain.WARMUP_STEPS_RATIO
+        n_warmup_steps = int(steps * BOSearchTrain.WARMUP_STEPS_RATIO)
 
         if self.cos_similarity:
             model = PairClassifier.CosSimilarity(self.sbert_model, fc_sizes, use_n_layers, self.device, self.fixed, dropout)
@@ -273,7 +278,7 @@ class BOSearchTrain():
 
         match self.optimizer:
             case Optimizer.ADAMW:
-                optimizer = torch.optim.AdamW(lr = lr, weight_decay = weight_decay)
+                optimizer = torch.optim.AdamW(model = model.parameters(), lr = lr, weight_decay = weight_decay)
             case _:
                 raise(TypeError(f'{self.optimizer} is not a valid Optimizer'))
 
@@ -299,14 +304,17 @@ class BOSearchTrain():
 
         best_f1 = 0
         best_results = None
+        best_vals = []
         for n in range(self.n_iterations):
             # Obtain candidate hyperparameter set by sampling from GP
             hp_set = self.sample_set(gp_model)
+            hp_set = hp_set.squeeze(0)
 
-            logger.info(f"Starting iteration {n}:\n" f"{[(name, hp_set[idx]) for idx, name in enumerate(self.names)]}")
-
+            logger.info(f"Starting iteration {n}:\n"
+                        f"{[(name, hp_set[self.hp_index[name]].item()) for name in self.names]}")
+            
             # Train and evaluate the hyperparameter set
-            results = self.train_for_hp_set()
+            results = self.train_for_hp_set(hp_set)
             if self.cos_similarity:
                 params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
             else:
@@ -322,16 +330,24 @@ class BOSearchTrain():
             # Fit Surrogate Model to newly added data
             gp_model = self.fit_GP()
 
+            best_vals.append(float(self.Y_observed.max().item()))
             # Save metrics of best performing model
             if np.max(epoch_val_f1) >= best_f1:
+                best_f1 = np.max(epoch_val_f1)
                 best_results = results
-        
+            
+            if len(best_vals) > BOSearchTrain.EARLY_STOP_WINDOW:
+                window = best_vals[-BOSearchTrain.EARLY_STOP_WINDOW:]
+                if max(window) - min(window) < BOSearchTrain.EARLY_STOP_THRESHOLD:
+                    logger.stop(f'EARLY STOP in Bayesian Optimization loop after {n} loop')
+                    break
+
         # Saves best model, HP samples with F1 scores and metrics of best performing model
         log_bo_results(
             model_name = f'BO_cos{self.cos_similarity}',
             X_observed = self.X_observed.numpy(),
             Y_observed = self.Y_observed.numpy(),
             col_names = self.names,
-            all_metrics = results[1:6],
+            all_metrics = best_results[1:6],
             params = best_results[0]
         )  
