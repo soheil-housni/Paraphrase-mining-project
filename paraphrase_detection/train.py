@@ -30,21 +30,27 @@ class Train():
             self.val_dataloader = val_dataloader
             self.sbert_trainable = sbert_trainable
 
-            # Freeze first n layer of model during training
-            if sbert_trainable:
-                self.freeze_layers(n_freeze)
-                for param in self.model.sbert[0].auto_model.embeddings.parameters():
-                    print(param.requires_grad)
-                for layer in self.model.sbert[0].auto_model.encoder:
-                    for param in layer.parameters():
-                        print(param.requires_grad)
-
-        def freeze_layers(self, n_freeze : int) -> None:
             for param in self.model.sbert[0].auto_model.embeddings.parameters():
                 param.requires_grad=False
             for i in range(n_freeze):
                 for param in self.model.sbert[0].auto_model.encoder.layer[i].parameters():
                     param.requires_grad = False
+                    
+            # Freeze first n layer of model during training
+            # if sbert_trainable:
+            #     self.freeze_layers(n_freeze)
+            #     for param in self.model.sbert[0].auto_model.embeddings.parameters():
+            #         print(param.requires_grad)
+            #     for layer in self.model.sbert[0].auto_model.encoder:
+            #         for param in layer.parameters():
+            #             print(param.requires_grad)
+            
+        # def freeze_layers(self, n_freeze : int) -> None:
+        #     for param in self.model.sbert[0].auto_model.embeddings.parameters():
+        #         param.requires_grad=False
+        #     for i in range(n_freeze):
+        #         for param in self.model.sbert[0].auto_model.encoder.layer[i].parameters():
+        #             param.requires_grad = False
 
         def run_training_loop(self) -> tuple[dict, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
             avg_batch_train_loss = np.zeros(self.epochs)
@@ -127,11 +133,11 @@ class Train():
                     best_model_f1 = epoch_val_f1[epoch]
                     best_params = self.model.state_dict()
 
-                logger.info(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
-                logger.info(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
-                logger.info(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
-                logger.info(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
-                logger.info(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
+                logger.trace(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
+                logger.trace(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
+                logger.trace(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
+                logger.trace(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
+                logger.trace(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
 
             return best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1
     
@@ -257,11 +263,11 @@ class Train():
                 epoch_val_acc[epoch] = accuracy_score(all_val_labels, all_val_preds.detach())
                 epoch_val_f1[epoch] = f1_score(all_val_labels, all_val_preds.detach(), average = 'macro')
 
-                logger.info(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
-                logger.info(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
-                logger.info(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
-                logger.info(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
-                logger.info(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
+                logger.trace(f'Epoch {epoch}: train loss = {avg_batch_train_loss[epoch]}')
+                logger.trace(f'Epoch {epoch}: validation loss = {avg_batch_val_loss[epoch]}')
+                logger.trace(f'Epoch {epoch}: train acc = {epoch_train_acc[epoch]}')
+                logger.trace(f'Epoch {epoch}: validation acc = {epoch_val_acc[epoch]}')
+                logger.trace(f'Epoch {epoch}: validation f1 = {epoch_val_f1[epoch]}')
             cosines_train_set = torch.cat(cosines_train_set, dim = 0)
             thresholds_train_set = torch.cat(thresholds_train_set, dim = 0)
             return best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set

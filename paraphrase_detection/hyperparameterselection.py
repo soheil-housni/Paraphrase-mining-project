@@ -13,7 +13,21 @@ from loguru import logger
 from modelarchitectures import PairClassifier
 from transformers import get_linear_schedule_with_warmup
 from enums import Optimizer, Scheduler
+from train import Train
+from dataclasses import dataclass
 
+@dataclass
+class HyperParameters:
+    lr: float
+    weight_decay: float
+    dropout: float
+    batch_size: int
+    n_freeze : int
+    use_n_layers: int
+    fc1: int
+    fc2: int
+    fc3: int
+    fc4: int
 
 class BOSearchTrain():
 
@@ -22,7 +36,7 @@ class BOSearchTrain():
     WARMUP_STEPS_RATIO = 0.1
 
     def __init__(self,
-                 bounds : torch,
+                 bounds : torch.Tensor,
                  names : list,
                  sbert_model : SentenceTransformer,
                  X_train : np.ndarray,
@@ -59,8 +73,25 @@ class BOSearchTrain():
         self.X_observed = None
         self.Y_observed = None
 
+        self.hp_index = {name: i for i, name in enumerate(names)}
+
         self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
+    def tensor_to_hparams(self, hp : torch.Tensor) -> HyperParameters:
+        hyperparams = HyperParameters(
+            lr = float(hp[self.hp_index["lr"]]),
+            weight_decay = float(hp[self.hp_index["weight_decay"]]),
+            dropout = float(hp[self.hp_index["dropout"]]),
+            n_freeze = int(hp[self.hp_index["n_freeze"]]),
+            batch_size = int(hp[self.hp_index["batch_size"]]),
+            use_n_layers = int(hp[self.hp_index["use_n_layers"]]),
+            fc1 = int(hp[self.hp_index["fc1"]]),
+            fc2 = int(hp[self.hp_index["fc2"]]),
+            fc3 = int(hp[self.hp_index["fc3"]]),
+            fc4 = int(hp[self.hp_index["fc4"]]),
+        )
+        return hyperparams
+    
     def fit_GP(self) -> SingleTaskGP:
         model = SingleTaskGP(self.X_observed.double(), self.Y_observed.double())
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
@@ -68,24 +99,69 @@ class BOSearchTrain():
         return model
     
     def init_hp_samples(self):
-        return self.bounds[0, :] + (self.bounds[1, :] - self.bounds[2, :]) * torch.rand(self.n_init_samples, self.bounds.shape[1])
+        return self.bounds[0, :] + (self.bounds[1, :] - self.bounds[0, :]) * torch.rand(self.n_init_samples, self.bounds.shape[1])
 
     def init_fit_samples(self, init_X : torch.Tensor):
-        logger.info(f'Intial fit of GP for {self.n_init_samples} samples of hyperparameter sets')
+        logger.info(f'Initial fit of GP for {self.n_init_samples} samples of hyperparameter sets \n')
         self.X_observed = init_X
         Y_observed = torch.zeros(self.n_init_samples)
+        hp = self.init_hp_samples()
         for n in range(self.n_init_samples):
-            # TODO ADD TRAINING FUNCTION TO FIT INITIAL X AND GET INITIAL Y
-            Y_observed[n] = 
+            logger.trace(f'Starting INIT iteration {n}:\n" f"{[(name, hp[n, idx]) for idx, name in enumerate(self.names)]}')
+            hp_n = hp[n, :]
+            results = self.train_for_hp_set(hp_n, True)
+            if self.cos_similarity:
+                best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
+            else:
+                best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set = results
+            Y_observed[n] = np.max(epoch_val_f1)
+            logger.trace(f'Maximum validation F1 score: {np.max(epoch_val_f1)}')
+        logger.success(f'Finished initial fit of samples')
         self.Y_observed = Y_observed 
 
-    def sample_set(self, model : SingleTaskGP, Y_observed : torch.Tensor, n_candidates = 1) -> torch.Tensor:
-        best_f = Y_observed.min()
+    def train_for_hp_set(self, hyperparams : torch.Tensor):
+        hp = self.tensor_to_hparams(hyperparams)
+        fc_sizes = [hp.fc1, hp.fc2, hp.fc3, hp.fc4]
+        model, optimizer, scheduler, train_loader, val_loader = self.train_config(hp.lr, hp.weight_decay, fc_sizes, hp.use_n_layers, hp.dropout, hp.batch_size)
+        if self.cos_similarity:
+            trainer = Train.CosSimClassifier(
+                model,
+                optimizer,
+                scheduler,
+                self.criterion,
+                self.device,
+                hp[self.mapping_helper('n_freeze')],
+                self.epochs,
+                train_loader,
+                val_loader,
+                self.sbert_model
+            )
+            results = trainer.run_training_loop()
+
+        else:
+            trainer = Train.Classifier(
+                model,
+                optimizer,
+                scheduler,
+                self.criterion,
+                self.device,
+                hp[self.mapping_helper('n_freeze')],
+                self.epochs,
+                train_loader,
+                val_loader,
+                self.sbert_model
+            )
+            results = trainer.run_training_loop()
+
+        return results
+        
+    def sample_set(self, model : SingleTaskGP, n_candidates = 1) -> torch.Tensor:
+        best_f = self.Y_observed.min()
         acq_fct = qExpectedImprovement(model = model, best_f = best_f)
 
         acq_bounds = self.bounds.T.double()
 
-        canditates = optimize_acqf(acq_function = acq_fct,
+        canditates, _ = optimize_acqf(acq_function = acq_fct,
                                    bounds = acq_bounds,
                                    q = n_candidates,
                                    num_restarts = BOSearchTrain.NUM_RESTARTS,
@@ -93,7 +169,14 @@ class BOSearchTrain():
                                    )
         return canditates
     
-    def train_config(self, lr, weight_decay, fc_sizes, use_n_layers, dropout, batch_size):
+    def train_config(self,
+                     lr : float,
+                     weight_decay : float,
+                     fc_sizes : int,
+                     use_n_layers : int,
+                     dropout : float,
+                     batch_size : int
+                     ) -> tuple[PairClassifier, Optimizer, Scheduler, DataLoader, DataLoader]:
         steps = self.epochs * self.X_train.shape[0] // batch_size
         n_warmup_steps = steps * BOSearchTrain.WARMUP_STEPS_RATIO
 
@@ -114,16 +197,25 @@ class BOSearchTrain():
             case _:
                 raise(TypeError(f'{self.scheduler} is not a valid Scheduler'))
 
-        tokenizer=AutoTokenizer.from_pretrained("bert-base-uncased")
-        train_loader = DataLoader(dataset = TextPairDataset(self.X_train, self.y_train, tokenization=True, tokenizer=tokenizer), batch_size = batch_size, shuffle = True, num_workers = 4)
-        val_loader = DataLoader(dataset = TextPairDataset(self.X_val, self.y_val, tokenization=True, tokenizer=tokenizer), batch_size = batch_size, shuffle = True, num_workers = 4)
-        return model, optimizer, scheduler
+        train_loader = DataLoader(dataset = TextPairDataset(self.X_train, self.y_train, tokenization = True, tokenizer = self.tokenizer), batch_size = batch_size, shuffle = True, num_workers = 4)
+        val_loader = DataLoader(dataset = TextPairDataset(self.X_val, self.y_val, tokenization = True, tokenizer = self.tokenizer), batch_size = batch_size, shuffle = True, num_workers = 4)
+        return model, optimizer, scheduler, train_loader, val_loader
 
     def search_loop(self):
-        hp_set = self.init_hp_samples()
         self.init_fit_samples()
+        logger.info(f"Starting BO hyperparameter search \n")
         gp_model = self.fit_GP()
         for n in range(self.n_iterations):
+            hp_set = self.sample_set(gp_model)
             logger.info(f"Starting iteration {n}:\n" f"{[(name, hp_set[idx]) for idx, name in enumerate(self.names)]}")
-        
-        
+            results = self.train_for_hp_set()
+            if self.cos_similarity:
+                best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
+            else:
+                best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set = results
+            
+            y = torch.tensor(np.max(epoch_val_f1))
+            self.X_observed = torch.hstack((self.X_observed, hp_set))
+            self.Y_observed = torch.hstack((self.Y_observed, y))
+
+            logger.trace(f'\n Maximum validation F1 score: {np.max(epoch_val_f1)} \n')    
