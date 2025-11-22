@@ -1,14 +1,14 @@
 # Relative imports
-from modelarchitectures import PairClassifier
-from logger import log_bo_results
+from .modelarchitectures import PairClassifier
+from .logger import log_bo_results
 from enums import Optimizer, Scheduler
-from train import Train
+from .train import Train
+from .dataloader import TextPairDataset
 
 # Libraries
 from sentence_transformers import SentenceTransformer
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
-from dataloader import TextPairDataset
 from botorch.models import SingleTaskGP
 from botorch.fit import fit_gpytorch_mll
 from botorch.acquisition import qExpectedImprovement
@@ -56,7 +56,7 @@ class BOSearchTrain():
                  y_val : np.ndarray,
                  optimizer : Optimizer,
                  scheduler : Scheduler,
-                 criterion : torch.nn,
+                 criterion : torch.nn.Module,
                  device : torch.device,
                  n_init_samples : int,
                  n_iterations : int,
@@ -144,13 +144,17 @@ class BOSearchTrain():
     def init_fit_samples(self) -> None:
         """
         Fits the set of initial samples that were drawn from the self.init_hp_samples to obtain an initial set of Y.
-        """        
+        """
         logger.info(f'Initial fit of GP for {self.n_init_samples} samples of hyperparameter sets \n')
+
         Y_observed = torch.zeros(self.n_init_samples)
         self.init_hp_samples()
         hp = self.X_observed
         for n in range(self.n_init_samples):
-            logger.trace(f'Starting INIT iteration {n}:\n" f"{[(name, hp[n, idx]) for idx, name in enumerate(self.names)]}')
+
+            logger.info(f"Starting iteration {n}:\n"
+                        f"{[(name, hp[self.hp_index[name]].item()) for name in self.names]}")
+
             hp_n = hp[n, :]
             results = self.train_for_hp_set(hp_n)
             if self.cos_similarity:

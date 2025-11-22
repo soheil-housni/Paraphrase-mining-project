@@ -6,7 +6,7 @@ import numpy as np
 from sklearn.metrics import f1_score, accuracy_score
 from loguru import logger
 from torch.optim.lr_scheduler import _LRScheduler
-from modelarchitectures import PairClassifier
+from .modelarchitectures import PairClassifier
 
 class Train():
     MIN_DELTA_EARLY_STOP = 0.005
