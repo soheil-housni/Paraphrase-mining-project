@@ -15,6 +15,7 @@ from transformers import get_linear_schedule_with_warmup
 from enums import Optimizer, Scheduler
 from train import Train
 from dataclasses import dataclass
+from logger import log_bo_results
 
 @dataclass
 class HyperParameters:
@@ -53,6 +54,7 @@ class BOSearchTrain():
                  cos_similarity : bool,
                  epochs : int
                  ) -> None:
+        
         self.bounds = bounds
         self.names = names
         self.n_init_samples = n_init_samples
@@ -76,7 +78,7 @@ class BOSearchTrain():
         self.hp_index = {name: i for i, name in enumerate(names)}
 
         self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-
+    
     def tensor_to_hparams(self, hp : torch.Tensor) -> HyperParameters:
         hyperparams = HyperParameters(
             lr = float(hp[self.hp_index["lr"]]),
@@ -92,12 +94,7 @@ class BOSearchTrain():
         )
         return hyperparams
     
-    def fit_GP(self) -> SingleTaskGP:
-        model = SingleTaskGP(self.X_observed.double(), self.Y_observed.double())
-        mll = ExactMarginalLogLikelihood(model.likelihood, model)
-        fit_gpytorch_mll(mll)
-        return model
-    
+
     def init_hp_samples(self):
         return self.bounds[0, :] + (self.bounds[1, :] - self.bounds[0, :]) * torch.rand(self.n_init_samples, self.bounds.shape[1])
 
@@ -118,9 +115,16 @@ class BOSearchTrain():
             logger.trace(f'Maximum validation F1 score: {np.max(epoch_val_f1)}')
         logger.success(f'Finished initial fit of samples')
         self.Y_observed = Y_observed 
-
+    
+    def fit_GP(self) -> SingleTaskGP:
+        model = SingleTaskGP(self.X_observed.double(), self.Y_observed.double())
+        mll = ExactMarginalLogLikelihood(model.likelihood, model)
+        fit_gpytorch_mll(mll)
+        return model
+    
     def train_for_hp_set(self, hyperparams : torch.Tensor):
         hp = self.tensor_to_hparams(hyperparams)
+
         fc_sizes = [hp.fc1, hp.fc2, hp.fc3, hp.fc4]
         model, optimizer, scheduler, train_loader, val_loader = self.train_config(hp.lr, hp.weight_decay, fc_sizes, hp.use_n_layers, hp.dropout, hp.batch_size)
         if self.cos_similarity:
@@ -130,7 +134,7 @@ class BOSearchTrain():
                 scheduler,
                 self.criterion,
                 self.device,
-                hp[self.mapping_helper('n_freeze')],
+                hp.n_freeze,
                 self.epochs,
                 train_loader,
                 val_loader,
@@ -145,7 +149,7 @@ class BOSearchTrain():
                 scheduler,
                 self.criterion,
                 self.device,
-                hp[self.mapping_helper('n_freeze')],
+                hp.n_freeze,
                 self.epochs,
                 train_loader,
                 val_loader,
@@ -205,17 +209,38 @@ class BOSearchTrain():
         self.init_fit_samples()
         logger.info(f"Starting BO hyperparameter search \n")
         gp_model = self.fit_GP()
+        best_params = None
+        best_f1 = 0
+        best_results = None
         for n in range(self.n_iterations):
             hp_set = self.sample_set(gp_model)
             logger.info(f"Starting iteration {n}:\n" f"{[(name, hp_set[idx]) for idx, name in enumerate(self.names)]}")
             results = self.train_for_hp_set()
+
             if self.cos_similarity:
-                best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
+                params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
             else:
-                best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set = results
+                params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set = results
             
             y = torch.tensor(np.max(epoch_val_f1))
-            self.X_observed = torch.hstack((self.X_observed, hp_set))
+            self.X_observed = torch.vstack((self.X_observed, hp_set))
             self.Y_observed = torch.hstack((self.Y_observed, y))
 
-            logger.trace(f'\n Maximum validation F1 score: {np.max(epoch_val_f1)} \n')    
+            logger.trace(f'\n Maximum validation F1 score: {np.max(epoch_val_f1)} \n')
+            
+            if np.max(epoch_val_f1) >= best_f1:
+                best_results = results
+        
+        log_bo_results(model_name = f'BO_cos{self.cos_similarity}',
+                       X_observed = self.X_observed.numpy(),
+                       Y_observed = self.Y_observed.numpy(),
+                       col_names = self.names,
+                       all_metrics = results[1:6],
+                       params = best_results[0]
+                       )
+
+
+        
+        
+
+                
