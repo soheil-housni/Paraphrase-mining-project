@@ -1,3 +1,10 @@
+# Relative imports
+from modelarchitectures import PairClassifier
+from logger import log_bo_results
+from enums import Optimizer, Scheduler
+from train import Train
+
+# Libraries
 from sentence_transformers import SentenceTransformer
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
@@ -10,12 +17,9 @@ from gpytorch.mlls import ExactMarginalLogLikelihood
 import numpy as np
 import torch
 from loguru import logger
-from modelarchitectures import PairClassifier
 from transformers import get_linear_schedule_with_warmup
-from enums import Optimizer, Scheduler
-from train import Train
 from dataclasses import dataclass
-from logger import log_bo_results
+from typing import Any
 
 @dataclass
 class HyperParameters:
@@ -31,7 +35,10 @@ class HyperParameters:
     fc4: int
 
 class BOSearchTrain():
-
+    """
+    Bayesian Optimization hyperparameter tuning with expected improvement as acquisition function and gaussian process 
+    as surrogate model. The criterion is the validation F1 score.
+    """    
     NUM_RESTARTS = 5
     RAW_SAMPLES = 50
     WARMUP_STEPS_RATIO = 0.1
@@ -54,7 +61,28 @@ class BOSearchTrain():
                  cos_similarity : bool,
                  epochs : int
                  ) -> None:
-        
+        """
+        Inializes the arguements required for the BO loop.
+
+        Args:
+            bounds (torch.Tensor): Bounds of the hyperparameters search space
+            names (list): Name of the hyperparameter to be tuned in BO
+            sbert_model (SentenceTransformer): SBERT model used from SentenceTransformer
+            X_train (np.ndarray): Design matrix of training data
+            y_train (np.ndarray): Label array of training data
+            X_val (np.ndarray): Design matrix of validation data
+            y_val (np.ndarray): Label array of training data
+            optimizer (Optimizer): Optimizer for training
+            scheduler (Scheduler): Learning rate scheduler
+            criterion (torch.nn): Criterion for loss calculations
+            device (torch.device): Device used during training
+            n_init_samples (int): Number of samples to initialize the surrogate model
+            n_iterations (int): Maximal number of iterations of BO
+            fixed (bool): Determines if the SBERT layers are to be kept fixed (fixed = True) or trainable (fixed = False)
+            cos_similarity (bool): Determinines if it should inialize the SBERTPairClassifier with cosine similarity or 
+            the cross entropy classifier
+            epochs (int): Number of epochs to run during training
+        """        
         self.bounds = bounds
         self.names = names
         self.n_init_samples = n_init_samples
@@ -72,14 +100,22 @@ class BOSearchTrain():
         self.optimizer = optimizer
         self.scheduler = scheduler
 
-        self.X_observed = None
-        self.Y_observed = None
-
-        self.hp_index = {name: i for i, name in enumerate(names)}
-
         self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+
+        # Helper to get the index of the hyperparameter based on the name
+        self.hp_index = {name: i for i, name in enumerate(names)}
     
     def tensor_to_hparams(self, hp : torch.Tensor) -> HyperParameters:
+        """
+        Transforms the tensor hyperparameters that BoTorch outputs into arguments of the HyperParameters class.
+        Helps obtain the value of the candidate hyperparameters.
+
+        Args:
+            hp (torch.Tensor): Candidate hyperparameters
+
+        Returns:
+            HyperParameters: Dataclass containing values of hyperparameters
+        """        
         hyperparams = HyperParameters(
             lr = float(hp[self.hp_index["lr"]]),
             weight_decay = float(hp[self.hp_index["weight_decay"]]),
@@ -94,13 +130,17 @@ class BOSearchTrain():
         )
         return hyperparams
     
+    def init_hp_samples(self) -> None:
+        """
+        Initializes self.n_init_samples set of uniformly sampled hyperparameters
+        """        
+        self.X_observed = self.bounds[0, :] + (self.bounds[1, :] - self.bounds[0, :]) * torch.rand(self.n_init_samples, self.bounds.shape[1])
 
-    def init_hp_samples(self):
-        return self.bounds[0, :] + (self.bounds[1, :] - self.bounds[0, :]) * torch.rand(self.n_init_samples, self.bounds.shape[1])
-
-    def init_fit_samples(self, init_X : torch.Tensor):
+    def init_fit_samples(self) -> None:
+        """
+        Fits the set of initial samples that were drawn from the self.init_hp_samples to obtain an initial set of Y.
+        """        
         logger.info(f'Initial fit of GP for {self.n_init_samples} samples of hyperparameter sets \n')
-        self.X_observed = init_X
         Y_observed = torch.zeros(self.n_init_samples)
         hp = self.init_hp_samples()
         for n in range(self.n_init_samples):
@@ -117,12 +157,28 @@ class BOSearchTrain():
         self.Y_observed = Y_observed 
     
     def fit_GP(self) -> SingleTaskGP:
+        """
+        Fits a Gaussian Process using the Exact Marginal LL
+
+        Returns:
+            SingleTaskGP: The GP that was fit on collected data so far
+        """        
         model = SingleTaskGP(self.X_observed.double(), self.Y_observed.double())
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
         fit_gpytorch_mll(mll)
         return model
     
-    def train_for_hp_set(self, hyperparams : torch.Tensor):
+    def train_for_hp_set(self, hyperparams : torch.Tensor) -> tuple[Any, ...]:
+        """
+        Trains a model based on a candidate set of hyperparameters.
+
+        Args:
+            hyperparams (torch.Tensor): Candidate hyperparameters
+        Returns:
+            tuple[Any, ...]: Outputs the best params across epochs as well as all metrics that Train class outputs. It is of variable
+            length depending if we are using the cosine similarity trainer or not
+        """        
+        
         hp = self.tensor_to_hparams(hyperparams)
 
         fc_sizes = [hp.fc1, hp.fc2, hp.fc3, hp.fc4]
@@ -159,7 +215,17 @@ class BOSearchTrain():
 
         return results
         
-    def sample_set(self, model : SingleTaskGP, n_candidates = 1) -> torch.Tensor:
+    def sample_set(self, model : SingleTaskGP, n_candidates : int = 1) -> torch.Tensor:
+        """
+        Samples a candidate hyperparameter set based on the best Expected Improvement.
+
+        Args:
+            model (SingleTaskGP): Gaussian Process fit so far
+            n_candidates (int, optional): Number of candidate sets. Defaults to 1.
+
+        Returns:
+            torch.Tensor: Candidate set of hyperparameters
+        """        
         best_f = self.Y_observed.min()
         acq_fct = qExpectedImprovement(model = model, best_f = best_f)
 
@@ -176,11 +242,27 @@ class BOSearchTrain():
     def train_config(self,
                      lr : float,
                      weight_decay : float,
-                     fc_sizes : int,
+                     fc_sizes : list[int],
                      use_n_layers : int,
                      dropout : float,
                      batch_size : int
                      ) -> tuple[PairClassifier, Optimizer, Scheduler, DataLoader, DataLoader]:
+        """
+        Inializes the training configurations that are dependent on hyperparameters.
+
+        Args:
+            lr (float): Learning rate.
+            weight_decay (float): Weight decay in optimizer.
+            fc_sizes (list[int]): Contains the number of fc layers (length of fc_sizes) and the number of neurons per hidden
+            layer.
+            use_n_layers (int): Number of the first n layers to use.
+            dropout (float): Neuron dropout rate for the model definitions
+            batch_size (int): Batch size to intialize the data loaders of training and validation sets
+
+        Returns:
+            tuple[PairClassifier, Optimizer, Scheduler, DataLoader, DataLoader]: Outputs the classifier, optimizer, learning rate scheduler,
+            training data loader and validation data loader.
+        """        
         steps = self.epochs * self.X_train.shape[0] // batch_size
         n_warmup_steps = steps * BOSearchTrain.WARMUP_STEPS_RATIO
 
@@ -205,42 +287,51 @@ class BOSearchTrain():
         val_loader = DataLoader(dataset = TextPairDataset(self.X_val, self.y_val, tokenization = True, tokenizer = self.tokenizer), batch_size = batch_size, shuffle = True, num_workers = 4)
         return model, optimizer, scheduler, train_loader, val_loader
 
-    def search_loop(self):
-        self.init_fit_samples()
+    def search_loop(self) -> None:
+        """
+        Computes the hyperparameter search iteratively.
+        """        
         logger.info(f"Starting BO hyperparameter search \n")
+
+        # Sample an initial set of X observations, evaluate it and fit the GP
+        self.init_fit_samples()        
         gp_model = self.fit_GP()
-        best_params = None
+
         best_f1 = 0
         best_results = None
         for n in range(self.n_iterations):
+            # Obtain candidate hyperparameter set by sampling from GP
             hp_set = self.sample_set(gp_model)
-            logger.info(f"Starting iteration {n}:\n" f"{[(name, hp_set[idx]) for idx, name in enumerate(self.names)]}")
-            results = self.train_for_hp_set()
 
+            logger.info(f"Starting iteration {n}:\n" f"{[(name, hp_set[idx]) for idx, name in enumerate(self.names)]}")
+
+            # Train and evaluate the hyperparameter set
+            results = self.train_for_hp_set()
             if self.cos_similarity:
                 params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
             else:
                 params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set = results
             
+            # Update current knowledge of the function
             y = torch.tensor(np.max(epoch_val_f1))
             self.X_observed = torch.vstack((self.X_observed, hp_set))
             self.Y_observed = torch.hstack((self.Y_observed, y))
 
             logger.trace(f'\n Maximum validation F1 score: {np.max(epoch_val_f1)} \n')
             
+            # Fit Surrogate Model to newly added data
+            gp_model = self.fit_GP()
+
+            # Save metrics of best performing model
             if np.max(epoch_val_f1) >= best_f1:
                 best_results = results
         
-        log_bo_results(model_name = f'BO_cos{self.cos_similarity}',
-                       X_observed = self.X_observed.numpy(),
-                       Y_observed = self.Y_observed.numpy(),
-                       col_names = self.names,
-                       all_metrics = results[1:6],
-                       params = best_results[0]
-                       )
-
-
-        
-        
-
-                
+        # Saves best model, HP samples with F1 scores and metrics of best performing model
+        log_bo_results(
+            model_name = f'BO_cos{self.cos_similarity}',
+            X_observed = self.X_observed.numpy(),
+            Y_observed = self.Y_observed.numpy(),
+            col_names = self.names,
+            all_metrics = results[1:6],
+            params = best_results[0]
+        )  
