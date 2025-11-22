@@ -9,7 +9,7 @@ from torch.optim.lr_scheduler import _LRScheduler
 from .modelarchitectures import PairClassifier
 
 class Train():
-    MIN_DELTA_EARLY_STOP = 0.005
+    MIN_DELTA_EARLY_STOP = 0.002
     def __init__(self,
                  model : torch.nn.Module,
                  optimizer : torch.optim,
