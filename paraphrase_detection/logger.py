@@ -36,12 +36,13 @@ def log_bo_results(model_name : str,
     avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = all_metrics
     if params:
         torch.save(params, f'models/{model_name}.pth')
-    n_iterations = np.arange(1, X_observed.shape[0] + 1).T
-    col_values = np.hstack((n_iterations, X_observed, Y_observed.T))
-    df_hp = pd.DataFrame(col_values, columns = col_names.insert(0, 'n_iter'))
+    n_iterations = np.arange(1, X_observed.shape[0] + 1).reshape((X_observed.shape[0], 1))
+    col_values = np.hstack((n_iterations, X_observed, Y_observed))
+    col_names_with_iter = ['n_iter'] + col_names + ['best_f1']
+    df_hp = pd.DataFrame(col_values, columns = col_names_with_iter)
 
     best_f1 = Y_observed.max()
-    best = df_hp[df_hp['epoch_val_f1'] == best_f1]
+    best = df_hp[df_hp['best_f1'] == best_f1]
 
     with open(f'log/{model_name}_hp.txt', 'w') as log:
         log.write(df_hp.to_string(index = False))
