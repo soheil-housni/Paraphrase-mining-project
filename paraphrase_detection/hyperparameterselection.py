@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 from botorch.models import SingleTaskGP
 from botorch.fit import fit_gpytorch_mll
-from botorch.acquisition import qExpectedImprovement
+from botorch.acquisition import qLogExpectedImprovement
 from botorch.optim import optimize_acqf
 from gpytorch.mlls import ExactMarginalLogLikelihood
 import numpy as np
@@ -19,7 +19,7 @@ import torch
 from loguru import logger
 from transformers import get_linear_schedule_with_warmup
 from torch.optim.lr_scheduler import LRScheduler
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any
 
 @dataclass
@@ -109,6 +109,18 @@ class BOSearchTrain():
         # Helper to get the index of the hyperparameter based on the name
         self.hp_index = {name: i for i, name in enumerate(names)}
     
+    @staticmethod
+    def normalize_X(X : torch.Tensor, bounds : torch.Tensor) -> torch.Tensor:
+        lower = bounds[:, 0]
+        upper = bounds[:, 1]
+        return (X - lower) / (upper - lower)
+
+    @staticmethod
+    def unnormalize_X(X_norm : torch.Tensor, bounds : torch.Tensor) -> torch.Tensor:
+        lower = bounds[:, 0]
+        upper = bounds[:, 1]
+        return lower + X_norm * (upper - lower)
+    
     def tensor_to_hparams(self, hp : torch.Tensor) -> HyperParameters:
         """
         Transforms the tensor hyperparameters that BoTorch outputs into arguments of the HyperParameters class.
@@ -145,25 +157,25 @@ class BOSearchTrain():
         """
         logger.info(f'Initial fit of GP for {self.n_init_samples} samples of hyperparameter sets \n')
 
-        Y_observed = torch.zeros(self.n_init_samples)
+        Y_observed = torch.zeros((self.n_init_samples, 1))
         self.init_hp_samples()
-        hp = self.X_observed
+        hp_init = self.X_observed
     
         for n in range(self.n_init_samples):
-            hp_n = hp[n, :]
-
+            hp_n = hp_init[n, :]
+            hp = self.tensor_to_hparams(hp_n)
             logger.info(f"Starting iteration {n}:\n"
-                        f"{[(name, hp_n[self.hp_index[name]].item()) for name in self.names]}")
+                        f"{[(f.name, getattr(hp, f.name)) for f in fields(hp)]}")
 
-            results = self.train_for_hp_set(hp_n)
+            results = self.train_for_hp_set(hp)
             if self.cos_similarity:
-                best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
-            else:
                 best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set = results
+            else:
+                best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
             Y_observed[n] = np.max(epoch_val_f1)
-            logger.info(f'Maximum validation F1 score: {np.max(epoch_val_f1)}')
+            logger.info(f'Maximum validation F1 score: {np.max(epoch_val_f1)} \n')
         logger.info(f'Finished initial fit of samples')
-        self.Y_observed = Y_observed 
+        self.Y_observed = Y_observed
     
     def fit_GP(self) -> SingleTaskGP:
         """
@@ -171,8 +183,14 @@ class BOSearchTrain():
 
         Returns:
             SingleTaskGP: The GP that was fit on collected data so far
-        """        
-        model = SingleTaskGP(self.X_observed.double(), self.Y_observed.double())
+        """
+
+        assert self.X_observed.dim() == 2, 'X_observed has to be of dim = 2 for GP fit'
+        assert self.Y_observed.dim() == 2, 'Y_observed has to be of dim = 2 for GP fit'
+
+        X_norm = BOSearchTrain.normalize_X(self.X_observed, self.bounds.T)
+        
+        model = SingleTaskGP(X_norm.double(), self.Y_observed.double())
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
         fit_gpytorch_mll(mll)
         return model
@@ -189,20 +207,26 @@ class BOSearchTrain():
             torch.Tensor: Candidate set of hyperparameters
         """        
         best_f = self.Y_observed.max()
-        acq_fct = qExpectedImprovement(model = model, best_f = best_f)
+        acq_fct = qLogExpectedImprovement(model = model, best_f = best_f)
 
-        acq_bounds = self.bounds.T.double()
+        d = self.X_observed.shape[1]
 
-        canditates, _ = optimize_acqf(acq_function = acq_fct,
+        acq_bounds = torch.stack([
+            torch.zeros(d),
+            torch.ones(d)
+        ]).double()
+
+        candidates_norm, _ = optimize_acqf(acq_function = acq_fct,
                                       bounds = acq_bounds,
                                       q = n_candidates,
                                       num_restarts = BOSearchTrain.NUM_RESTARTS,
                                       raw_samples = BOSearchTrain.RAW_SAMPLES,
                                       return_best_only = True
                                       )
-        return canditates
+        candidates = BOSearchTrain.unnormalize_X(candidates_norm, self.bounds.T)
+        return candidates
     
-    def train_for_hp_set(self, hyperparams : torch.Tensor) -> tuple[Any, ...]:
+    def train_for_hp_set(self, hp : HyperParameters) -> tuple[Any, ...]:
         """
         Trains a model based on a candidate set of hyperparameters.
 
@@ -212,43 +236,49 @@ class BOSearchTrain():
             tuple[Any, ...]: Outputs the best params across epochs as well as all metrics that Train class outputs. It is of variable
             length depending if we are using the cosine similarity trainer or not
         """        
-        
-        hp = self.tensor_to_hparams(hyperparams)
 
         fc_sizes = [hp.fc1, hp.fc2, hp.fc3]
         model, optimizer, scheduler, train_loader, val_loader = self.train_config(hp.lr, hp.weight_decay, fc_sizes, hp.use_n_layers, hp.dropout, hp.batch_size)
 
         assert isinstance(hp.n_freeze, int), 'n_freeze must be int'
 
-        if self.cos_similarity:
-            trainer = Train(
-                model,
-                optimizer,
-                scheduler,
-                self.criterion,
-                self.device,
-                hp.n_freeze,
-                self.epochs,
-                train_loader,
-                val_loader,
-                self.patience
-            )
-            results = trainer.run_training_loop()
+        try:
+            if self.cos_similarity:
+                trainer = Train(
+                    model,
+                    optimizer,
+                    scheduler,
+                    self.criterion,
+                    self.device,
+                    hp.n_freeze,
+                    self.epochs,
+                    train_loader,
+                    val_loader,
+                    self.patience
+                )
+                results = trainer.run_training_loop()
 
-        else:
-            trainer = Train(
-                model,
-                optimizer,
-                scheduler,
-                self.criterion,
-                self.device,
-                hp.n_freeze,
-                self.epochs,
-                train_loader,
-                val_loader,
-                self.patience
-            )
-            results = trainer.run_training_loop()
+            else:
+                trainer = Train(
+                    model,
+                    optimizer,
+                    scheduler,
+                    self.criterion,
+                    self.device,
+                    hp.n_freeze,
+                    self.epochs,
+                    train_loader,
+                    val_loader,
+                    self.patience
+                )
+                results = trainer.run_training_loop()
+        finally:
+            del trainer, model, optimizer, scheduler
+
+            if self.device.type == 'mps':
+                torch.mps.empty_cache()
+            elif self.device.type == 'cude':
+                torch.cuda.empty_cache()
 
         return results
     
@@ -303,17 +333,18 @@ class BOSearchTrain():
                 scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps = n_warmup_steps, num_training_steps = steps)
             case _:
                 raise(TypeError(f'{self.scheduler} is not a valid Scheduler'))
-
-        train_loader = DataLoader(dataset = TextPairDataset(self.X_train, self.y_train, tokenization = True, tokenizer = self.tokenizer), batch_size = batch_size, shuffle = True, num_workers = 4)
-        val_loader = DataLoader(dataset = TextPairDataset(self.X_val, self.y_val, tokenization = True, tokenizer = self.tokenizer), batch_size = batch_size, shuffle = True, num_workers = 4)
+        if self.fixed:
+            train_loader = DataLoader(dataset = TextPairDataset(self.X_train, self.y_train), batch_size = batch_size, shuffle = True, num_workers = 4)
+            val_loader = DataLoader(dataset = TextPairDataset(self.X_val, self.y_val), batch_size = batch_size, shuffle = True, num_workers = 4)
+        else:
+            train_loader = DataLoader(dataset = TextPairDataset(self.X_train, self.y_train, tokenization = True, tokenizer = self.tokenizer), batch_size = batch_size, shuffle = True, num_workers = 4)
+            val_loader = DataLoader(dataset = TextPairDataset(self.X_val, self.y_val, tokenization = True, tokenizer = self.tokenizer), batch_size = batch_size, shuffle = True, num_workers = 4)
         return model, optimizer, scheduler, train_loader, val_loader
 
     def search_loop(self) -> None:
         """
         Computes the hyperparameter search iteratively.
         """        
-        logger.info(f"Starting BO hyperparameter search \n")
-
         # Sample an initial set of X observations, evaluate it and fit the GP
         self.init_fit_samples()        
         gp_model = self.fit_GP()
@@ -321,25 +352,30 @@ class BOSearchTrain():
         best_f1 = 0
         best_results = None
         best_vals = []
+
+        logger.info(f"Starting BO hyperparameter search \n")
+        
         for n in range(self.n_iterations):
             # Obtain candidate hyperparameter set by sampling from GP
             hp_set = self.sample_set(gp_model)
             hp_set = hp_set.squeeze(0)
+            
+            hp = self.tensor_to_hparams(hp_set)
 
             logger.info(f"Starting iteration {n}:\n"
-                        f"{[(name, hp_set[self.hp_index[name]].item()) for name in self.names]}")
+                        f"{[(f.name, getattr(hp, f.name)) for f in fields(hp)]}")
             
             # Train and evaluate the hyperparameter set
-            results = self.train_for_hp_set(hp_set)
+            results = self.train_for_hp_set(hp)
             if self.cos_similarity:
-                params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
-            else:
                 params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set = results
+            else:
+                params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
             
             # Update current knowledge of the function
-            y = torch.tensor(np.max(epoch_val_f1))
-            self.X_observed = torch.vstack((self.X_observed, hp_set))
-            self.Y_observed = torch.hstack((self.Y_observed, y))
+            y = torch.tensor([[np.max(epoch_val_f1)]])
+            self.X_observed = torch.vstack((self.X_observed, hp_set.unsqueeze(0)))
+            self.Y_observed = torch.vstack((self.Y_observed, y))
 
             logger.info(f'\n Maximum validation F1 score: {np.max(epoch_val_f1)} \n')
             
@@ -357,13 +393,5 @@ class BOSearchTrain():
                 if max(window) - min(window) < BOSearchTrain.EARLY_STOP_THRESHOLD:
                     logger.info(f'EARLY STOP in Bayesian Optimization loop after {n} loop')
                     break
-
-        # Saves best model, HP samples with F1 scores and metrics of best performing model
-        log_bo_results(
-            model_name = f'BO_cos{self.cos_similarity}',
-            X_observed = self.X_observed.numpy(),
-            Y_observed = self.Y_observed.numpy(),
-            col_names = self.names,
-            all_metrics = best_results[1:6],
-            params = best_results[0]
-        )  
+        return best_results
+          

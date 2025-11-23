@@ -33,6 +33,7 @@ class Train():
         self.fixed = model.fixed
         self.patience = patience
         self.model.to(self.device)
+        self.n_freeze = n_freeze
 
         # Determine from model if we're using CrossEntropy or CosSimilarity as a model architecture
         if isinstance(model, PairClassifier.CrossEntropy):
@@ -42,15 +43,13 @@ class Train():
         else:
             raise TypeError(f'Unsupported model type {type(model)}')
         
-        # Freeze first n layer of model during training
-        if self.fixed:
-            self.freeze_layers(n_freeze)
-            # for param in self.model.sbert[0].auto_model.embeddings.parameters():
-            #     print(param.requires_grad)
+        if not self.fixed and n_freeze != self.model.sbert[0].auto_model.config.num_hidden_layers:
+            self.freeze_layers(self.n_freeze)
 
     def freeze_layers(self, n_freeze : int) -> None:
         for param in self.model.sbert[0].auto_model.embeddings.parameters():
             param.requires_grad = False
+
         for i in range(n_freeze):
             for param in self.model.sbert[0].auto_model.encoder.layer[i].parameters():
                 param.requires_grad = False
