@@ -277,7 +277,7 @@ class BOSearchTrain():
 
             if self.device.type == 'mps':
                 torch.mps.empty_cache()
-            elif self.device.type == 'cude':
+            elif self.device.type == 'cuda':
                 torch.cuda.empty_cache()
 
         return results
@@ -382,16 +382,16 @@ class BOSearchTrain():
             # Fit Surrogate Model to newly added data
             gp_model = self.fit_GP()
 
-            best_vals.append(float(self.Y_observed.max().item()))
+            best_vals.append(np.max(epoch_val_f1))
             # Save metrics of best performing model
             if np.max(epoch_val_f1) >= best_f1:
                 best_f1 = np.max(epoch_val_f1)
                 best_results = results
             
-            if len(best_vals) > BOSearchTrain.EARLY_STOP_WINDOW:
+            if len(best_vals) >= BOSearchTrain.EARLY_STOP_WINDOW:
                 window = best_vals[-BOSearchTrain.EARLY_STOP_WINDOW:]
                 if max(window) - min(window) < BOSearchTrain.EARLY_STOP_THRESHOLD:
-                    logger.info(f'EARLY STOP in Bayesian Optimization loop after {n} loop')
+                    logger.warning(f'EARLY STOP in Bayesian Optimization loop after {n} loop')
                     break
         return best_results
           
