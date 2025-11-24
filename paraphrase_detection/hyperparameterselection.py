@@ -42,8 +42,8 @@ class BOSearchTrain():
     NUM_RESTARTS = 5
     RAW_SAMPLES = 50
     WARMUP_STEPS_RATIO = 0.1
-    EARLY_STOP_THRESHOLD = 0.005
-    EARLY_STOP_WINDOW = 4
+    EARLY_STOP_THRESHOLD = 0.002
+    EARLY_STOP_WINDOW = 5
 
     def __init__(self,
                  bounds : torch.Tensor,
@@ -151,7 +151,7 @@ class BOSearchTrain():
         """        
         self.X_observed = self.bounds[0, :] + (self.bounds[1, :] - self.bounds[0, :]) * torch.rand(self.n_init_samples, self.bounds.shape[1])
 
-    def init_fit_samples(self) -> None:
+    def init_fit_samples(self) -> tuple[float, tuple]:
         """
         Fits the set of initial samples that were drawn from the self.init_hp_samples to obtain an initial set of Y.
         """
@@ -160,7 +160,8 @@ class BOSearchTrain():
         Y_observed = torch.zeros((self.n_init_samples, 1))
         self.init_hp_samples()
         hp_init = self.X_observed
-    
+        best_f1 = 0
+        best_results = None
         for n in range(self.n_init_samples):
             hp_n = hp_init[n, :]
             hp = self.tensor_to_hparams(hp_n)
@@ -173,9 +174,16 @@ class BOSearchTrain():
             else:
                 best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
             Y_observed[n] = np.max(epoch_val_f1)
+            
             logger.info(f'Maximum validation F1 score: {np.max(epoch_val_f1)} \n')
-        logger.info(f'Finished initial fit of samples')
+
+            if np.max(epoch_val_f1) >= best_f1:
+                best_f1 = np.max(epoch_val_f1)
+                best_results = results
+
+        logger.success(f'Finished initial fit of samples')
         self.Y_observed = Y_observed
+        return best_f1, best_results
     
     def fit_GP(self) -> SingleTaskGP:
         """
@@ -346,14 +354,12 @@ class BOSearchTrain():
         Computes the hyperparameter search iteratively.
         """        
         # Sample an initial set of X observations, evaluate it and fit the GP
-        self.init_fit_samples()        
+        best_f1, best_results = self.init_fit_samples()        
         gp_model = self.fit_GP()
 
-        best_f1 = 0
-        best_results = None
         best_vals = []
 
-        logger.info(f"Starting BO hyperparameter search \n")
+        logger.success(f"Starting BO hyperparameter search \n")
         
         for n in range(self.n_iterations):
             # Obtain candidate hyperparameter set by sampling from GP
@@ -383,6 +389,7 @@ class BOSearchTrain():
             gp_model = self.fit_GP()
 
             best_vals.append(np.max(epoch_val_f1))
+
             # Save metrics of best performing model
             if np.max(epoch_val_f1) >= best_f1:
                 best_f1 = np.max(epoch_val_f1)

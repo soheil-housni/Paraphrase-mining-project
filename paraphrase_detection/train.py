@@ -43,7 +43,7 @@ class Train():
         else:
             raise TypeError(f'Unsupported model type {type(model)}')
         
-        if not self.fixed and n_freeze != self.model.sbert[0].auto_model.config.num_hidden_layers:
+        if not self.fixed:
             self.freeze_layers(self.n_freeze)
 
     def freeze_layers(self, n_freeze : int) -> None:
