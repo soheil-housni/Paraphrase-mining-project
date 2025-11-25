@@ -391,7 +391,7 @@ class BOSearchTrain():
             if len(best_vals) > BOSearchTrain.EARLY_STOP_WINDOW:
                 window = best_vals[-BOSearchTrain.EARLY_STOP_WINDOW:]
                 if max(window) - min(window) < BOSearchTrain.EARLY_STOP_THRESHOLD:
-                    logger.info(f'EARLY STOP in Bayesian Optimization loop after {n} loop')
+                    logger.warning(f'EARLY STOP in Bayesian Optimization loop after {n} loop')
                     break
         return best_results
           
