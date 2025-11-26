@@ -94,7 +94,6 @@ class PairClassifier():
             output = nn.functional.sigmoid(cos_sim - threshold)
             return (output, threshold, cos_sim)
         
-    
     class CrossAttention(nn.Module):
         def __init__(self,
                      model : SentenceTransformer,
@@ -112,40 +111,51 @@ class PairClassifier():
             self.device = device
             self.fixed = fixed
             
-            OUTPUT_DIM = 2
+            # OUTPUT_DIM = 2
+            # EMB_DIM = model.get_sentence_embedding_dimension()
+
+            # hidden_sizes = fc_sizes[:use_n_layers]
+            # layers = []
+            # layers.append(nn.Linear(3 * EMB_DIM, hidden_sizes[0]))
+            # norm_layers = [nn.LayerNorm(fc_sizes[0])]
+            # for i in range(use_n_layers - 1):
+            #     layers.append(nn.Linear(hidden_sizes[i], hidden_sizes[i + 1]))
+            #     norm_layers.append(nn.LayerNorm(fc_sizes[i + 1]))
+            # layers.append(nn.Linear(hidden_sizes[-1], OUTPUT_DIM))
+
+            # self.layers = nn.ModuleList(layers)
+            # self.norm_layers = nn.ModuleList(norm_layers)
+            
+            OUPUT_DIM = 2
             EMB_DIM = model.get_sentence_embedding_dimension()
+            
+            self.norm1=nn.LayerNorm(self.sbert.get_sentence_embedding_dimension())
 
-            hidden_sizes = fc_sizes[:use_n_layers]
-            layers = []
-            layers.append(nn.Linear(3 * EMB_DIM, hidden_sizes[0]))
-            norm_layers = [nn.LayerNorm(fc_sizes[0])]
-            for i in range(use_n_layers - 1):
-                layers.append(nn.Linear(hidden_sizes[i], hidden_sizes[i + 1]))
-                norm_layers.append(nn.LayerNorm(fc_sizes[i + 1]))
-            layers.append(nn.Linear(hidden_sizes[-1], OUTPUT_DIM))
-
+            fc_sizes = fc_sizes[:use_n_layers]
+            layers = [nn.Linear(3 * EMB_DIM, fc_sizes[0])]
+            norm_layers=[nn.LayerNorm(fc_sizes[0])]
+            for layer in range(len(fc_sizes)):
+                if layer == len(fc_sizes) - 1:
+                    layers.append(nn.Linear(fc_sizes[layer], OUPUT_DIM))
+                else:
+                    layers.append(nn.Linear(fc_sizes[layer], fc_sizes[layer + 1]))
+                    norm_layers.append(nn.LayerNorm(fc_sizes[layer+1]))
             self.layers = nn.ModuleList(layers)
-            self.norm_layers = nn.ModuleList(norm_layers)
-            self.cross_attention = CrossAttention(dmodel=self.sbert[0].auto_model.config.hidden_size, use_n_layers_cross_att = use_n_layers_cross_att, fc_sizes_cross_att = fc_sizes_cross_att)
+            self.norm_layers=nn.ModuleList(norm_layers)
+            self.cross_attention = MHCrossAttention(dmodel=self.sbert[0].auto_model.config.hidden_size, use_n_layers_cross_att = use_n_layers_cross_att, fc_sizes_cross_att = fc_sizes_cross_att)
             
         def forward(self, x0 : np.ndarray, x1 : np.ndarray):
-            transformed_x0 = self.sbert[0].auto_model(**x0)
-            transformed_x1 = self.sbert[0].auto_model(**x1)
+            transformed_x0=self.sbert[0].auto_model(**x0)
+            transformed_x1=self.sbert[0].auto_model(**x1)
 
-            cross_attention_x0 = self.cross_attention(transformed_x0[0],transformed_x1[0],x1["attention_mask"], dropout_p=self.dropout)
-            cross_attention_x1 = self.cross_attention(transformed_x1[0],transformed_x0[0],x0["attention_mask"], dropout_p=self.dropout)
+            cross_attention_x0=self.cross_attention(transformed_x0[0],transformed_x1[0],x1["attention_mask"], dropout_p=self.dropout)
+            cross_attention_x1=self.cross_attention(transformed_x1[0],transformed_x0[0],x0["attention_mask"], dropout_p=self.dropout)
 
             pooled_x0=self.sbert[1]({"token_embeddings":cross_attention_x0, "attention_mask":x0["attention_mask"]})
             pooled_x1=self.sbert[1]({"token_embeddings":cross_attention_x1, "attention_mask":x1["attention_mask"]})
 
-            normalized_x0 = self.sbert[2](pooled_x0)
-            normalized_x1 = self.sbert[2](pooled_x1)
-
-            emb_x0 = normalized_x0["sentence_embedding"].to(self.device)
-            emb_x1 = normalized_x1["sentence_embedding"].to(self.device)
-
-            emb_x0 = nn.functional.normalize(emb_x0)
-            emb_x1 = nn.functional.normalize(emb_x1)
+            emb_x0=self.norm1(pooled_x0["sentence_embedding"])
+            emb_x1=self.norm1(pooled_x1["sentence_embedding"])
 
             abs_diff = torch.abs(emb_x0 - emb_x1)
             x = torch.cat([emb_x0, emb_x1, abs_diff], dim=1)
@@ -157,7 +167,7 @@ class PairClassifier():
             logits = self.layers[-1](x)
             return logits
 
-class CrossAttention(nn.Module):
+class MHCrossAttention(nn.Module):
     def __init__(self, use_n_layers_cross_att : int, dmodel = 384, h = 8, fc_sizes_cross_att = [768]):
         super().__init__()
         self.dmodel=dmodel
@@ -180,12 +190,24 @@ class CrossAttention(nn.Module):
         self.norm1 = nn.LayerNorm(dmodel)
         self.norm2 = nn.LayerNorm(dmodel)
 
-        layers = []
-        layers.append(nn.Linear(dmodel, fc_sizes_cross_att[0]))
-        for i in range(use_n_layers_cross_att - 1):
-            layers.append(nn.Linear(fc_sizes_cross_att[i], fc_sizes_cross_att[i + 1]))
-        layers.append(nn.Linear(fc_sizes_cross_att[-1], dmodel))
+        fc_sizes_cross_att = fc_sizes_cross_att[:use_n_layers_cross_att]
+
+        layers = [nn.Linear(dmodel, fc_sizes_cross_att[0])]
+        for layer in range(len(fc_sizes_cross_att)):
+            if layer == len(fc_sizes_cross_att) - 1:
+                layers.append(nn.Linear(fc_sizes_cross_att[layer],dmodel))
+            else:
+                layers.append(nn.Linear(fc_sizes_cross_att[layer], fc_sizes_cross_att[layer + 1]))
+
         self.layers = nn.ModuleList(layers)
+
+
+        # layers = []
+        # layers.append(nn.Linear(dmodel, fc_sizes_cross_att[0]))
+        # for i in range(use_n_layers_cross_att - 1):
+        #     layers.append(nn.Linear(fc_sizes_cross_att[i], fc_sizes_cross_att[i + 1]))
+        # layers.append(nn.Linear(fc_sizes_cross_att[-1], dmodel))
+        # self.layers = nn.ModuleList(layers)
 
     def forward(self, A, B, attention_maskB, dropout_p=0.1) -> torch.Tensor:
         head_attention=[]
@@ -209,7 +231,7 @@ class CrossAttention(nn.Module):
             x=self.layers[layer](x)
             x = nn.functional.gelu(x)
             x = nn.functional.dropout(x, p = dropout_p, training=self.training)
-        x=self.layers[-1](x)
+        x = self.layers[-1](x)
         output=self.norm2(output+x)
 
         return output

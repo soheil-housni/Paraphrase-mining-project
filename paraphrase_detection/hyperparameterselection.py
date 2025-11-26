@@ -4,6 +4,7 @@ from .logger import log_bo_results
 from enums import Optimizer, Scheduler, Model
 from .train import Train
 from .dataloader import TextPairDataset
+from .hyperparametersets import HP
 
 # Libraries
 from sentence_transformers import SentenceTransformer
@@ -21,7 +22,7 @@ from transformers import get_linear_schedule_with_warmup
 from torch.optim.lr_scheduler import LRScheduler
 from dataclasses import dataclass, fields
 from typing import Any
-from hyperparametersets import HP
+
 
 class BOSearchTrain():
     """
@@ -31,8 +32,8 @@ class BOSearchTrain():
     NUM_RESTARTS = 5
     RAW_SAMPLES = 50
     WARMUP_STEPS_RATIO = 0.1
-    EARLY_STOP_THRESHOLD = 0.0035
-    EARLY_STOP_WINDOW = 4
+    EARLY_STOP_THRESHOLD = 0.01
+    EARLY_STOP_WINDOW = 6
 
     def __init__(self,
                  bounds : torch.Tensor,
@@ -94,11 +95,11 @@ class BOSearchTrain():
 
         match model_arch:
             case Model.CROSSENTROPY:
-                self.hp_dataclass = HP.CrossEntropyHP()
+                self.hp_dataclass = HP.CrossEntropyHP
             case Model.CROSSATTENTION:
-                self.hp_dataclass = HP.CrossAttentionHP()
+                self.hp_dataclass = HP.CrossAttentionHP
             case Model.COSINETHRESHOLD:
-                self.hp_dataclass = HP.CosineSimilarityHP()
+                self.hp_dataclass = HP.CosineSimilarityHP
             
         if len(fields(self.hp_dataclass)) != bounds.shape[1]:
                     raise ValueError(f'Number of bounds is different from length of fields in hyperparameter set data class')
@@ -233,12 +234,13 @@ class BOSearchTrain():
         ]).double()
 
         candidates_norm, _ = optimize_acqf(acq_function = acq_fct,
-                                      bounds = acq_bounds,
-                                      q = n_candidates,
-                                      num_restarts = BOSearchTrain.NUM_RESTARTS,
-                                      raw_samples = BOSearchTrain.RAW_SAMPLES,
-                                      return_best_only = True
-                                      )
+                                           bounds = acq_bounds,
+                                           q = n_candidates,
+                                           num_restarts = BOSearchTrain.NUM_RESTARTS,
+                                           raw_samples = BOSearchTrain.RAW_SAMPLES,
+                                           return_best_only = True
+                                           )
+        
         candidates = BOSearchTrain.unnormalize_X(candidates_norm, self.bounds.T)
         return candidates
     
@@ -265,28 +267,27 @@ class BOSearchTrain():
 
         assert isinstance(hp.n_freeze, int), 'n_freeze must be int'
 
-        try:
-            trainer = Train(
-                model,
-                optimizer,
-                scheduler,
-                self.criterion,
-                self.device,
-                hp.n_freeze,
-                self.epochs,
-                train_loader,
-                val_loader,
-                self.patience
-            )
-            results = trainer.run_training_loop()
-        finally:
+        trainer = Train(
+            model,
+            optimizer,
+            scheduler,
+            self.criterion,
+            self.device,
+            hp.n_freeze,
+            self.epochs,
+            train_loader,
+            val_loader,
+            self.patience
+        )
 
-            del trainer, model, optimizer, scheduler, train_loader, val_loader
+        results = trainer.run_training_loop()
 
-            if self.device.type == 'mps':
-                torch.mps.empty_cache()
-            elif self.device.type == 'cuda':
-                torch.cuda.empty_cache()
+        del trainer, model, optimizer, scheduler, train_loader, val_loader
+
+        if self.device.type == 'mps':
+            torch.mps.empty_cache()
+        elif self.device.type == 'cuda':
+            torch.cuda.empty_cache()
 
         return results
     
@@ -349,7 +350,7 @@ class BOSearchTrain():
             case _:
                 raise(TypeError(f'{self.scheduler} is not a valid Scheduler'))
             
-        if self.fixed & self.model_arch != Model.CROSSATTENTION:
+        if self.fixed and self.model_arch != Model.CROSSATTENTION:
             train_loader = DataLoader(dataset = TextPairDataset(self.X_train, self.y_train), batch_size = batch_size, shuffle = True, num_workers = 4)
             val_loader = DataLoader(dataset = TextPairDataset(self.X_val, self.y_val), batch_size = batch_size, shuffle = True, num_workers = 4)
         else:
