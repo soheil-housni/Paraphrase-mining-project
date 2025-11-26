@@ -36,7 +36,7 @@ class Train():
         self.n_freeze = n_freeze
 
         # Determine from model if we're using CrossEntropy or CosSimilarity as a model architecture
-        if isinstance(model, PairClassifier.CrossEntropy):
+        if isinstance(model, PairClassifier.CrossEntropy) | isinstance(model, PairClassifier.CrossAttention):
             self.is_cos_sim = False
         elif isinstance(model, PairClassifier.CosSimilarity):
             self.is_cos_sim = True

@@ -1,7 +1,7 @@
 # Relative imports
 from .modelarchitectures import PairClassifier
 from .logger import log_bo_results
-from enums import Optimizer, Scheduler
+from enums import Optimizer, Scheduler, Model
 from .train import Train
 from .dataloader import TextPairDataset
 
@@ -21,18 +21,7 @@ from transformers import get_linear_schedule_with_warmup
 from torch.optim.lr_scheduler import LRScheduler
 from dataclasses import dataclass, fields
 from typing import Any
-
-@dataclass
-class HyperParameters:
-    lr: float
-    weight_decay: float
-    dropout: float
-    batch_size: int
-    n_freeze : int
-    use_n_layers: int
-    fc1: int
-    fc2: int
-    fc3: int
+from hyperparametersets import HP
 
 class BOSearchTrain():
     """
@@ -42,12 +31,11 @@ class BOSearchTrain():
     NUM_RESTARTS = 5
     RAW_SAMPLES = 50
     WARMUP_STEPS_RATIO = 0.1
-    EARLY_STOP_THRESHOLD = 0.002
-    EARLY_STOP_WINDOW = 5
+    EARLY_STOP_THRESHOLD = 0.0035
+    EARLY_STOP_WINDOW = 4
 
     def __init__(self,
                  bounds : torch.Tensor,
-                 names : list,
                  sbert_model : SentenceTransformer,
                  X_train : np.ndarray,
                  y_train : np.ndarray,
@@ -62,7 +50,8 @@ class BOSearchTrain():
                  fixed : bool,
                  cos_similarity : bool,
                  epochs : int,
-                 patience : int
+                 patience : int,
+                 model_arch : Model
                  ) -> None:
         """
         Inializes the arguements required for the BO loop.
@@ -87,7 +76,6 @@ class BOSearchTrain():
             epochs (int): Number of epochs to run during training
         """        
         self.bounds = bounds
-        self.names = names
         self.n_init_samples = n_init_samples
         self.sbert_model = sbert_model
         self.X_train = X_train
@@ -103,11 +91,25 @@ class BOSearchTrain():
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.patience = patience
+        self.model_arch = model_arch
 
         self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
+        match model_arch:
+            case Model.CROSSENTROPY:
+                self.hp_dataclass = HP.CrossEntropyHP()
+            case Model.CROSSATTENTION:
+                self.hp_dataclass = HP.CrossAttentionHP()
+            case Model.COSINETHRESHOLD:
+                self.hp_dataclass = HP.CosineSimilarityHP()
+            
+        if len(fields(self.hp_dataclass)) != bounds.shape[1]:
+                    raise ValueError(f'Number of bounds is different from length of fields in hyperparameter set data class')
+
+        hp_fields = fields(self.hp_dataclass)
+
         # Helper to get the index of the hyperparameter based on the name
-        self.hp_index = {name: i for i, name in enumerate(names)}
+        self.hp_index = {f.name: i for i, f in enumerate(hp_fields)}
     
     @staticmethod
     def normalize_X(X : torch.Tensor, bounds : torch.Tensor) -> torch.Tensor:
@@ -121,7 +123,7 @@ class BOSearchTrain():
         upper = bounds[:, 1]
         return lower + X_norm * (upper - lower)
     
-    def tensor_to_hparams(self, hp : torch.Tensor) -> HyperParameters:
+    def tensor_to_hparams(self, hp : torch.Tensor):
         """
         Transforms the tensor hyperparameters that BoTorch outputs into arguments of the HyperParameters class.
         Helps obtain the value of the candidate hyperparameters.
@@ -132,17 +134,23 @@ class BOSearchTrain():
         Returns:
             HyperParameters: Dataclass containing values of hyperparameters
         """        
-        hyperparams = HyperParameters(
-            lr = float(hp[self.hp_index["lr"]]),
-            weight_decay = float(hp[self.hp_index["weight_decay"]]),
-            dropout = float(hp[self.hp_index["dropout_p"]]),
-            n_freeze = int(hp[self.hp_index["n_freeze"]]),
-            batch_size = int(hp[self.hp_index["batch_size"]]),
-            use_n_layers = int(hp[self.hp_index["use_n_layers"]]),
-            fc1 = int(hp[self.hp_index["fc1"]]),
-            fc2 = int(hp[self.hp_index["fc2"]]),
-            fc3 = int(hp[self.hp_index["fc3"]])
-        )
+        hp_kwargs = {}
+
+        for field in fields(self.hp_dataclass):
+            name = field.name
+            index = self.hp_index.get(name)
+
+            value = hp[index].item()
+
+            if field.type is int:
+                hp_kwargs[name] = int(value)
+            elif field.type is float:
+                hp_kwargs[name] = float(value)
+            else:
+                hp_kwargs[name] = value
+            
+        hyperparams = self.hp_dataclass(**hp_kwargs)
+
         return hyperparams
     
     def init_hp_samples(self) -> None:
@@ -169,10 +177,13 @@ class BOSearchTrain():
                         f"{[(f.name, getattr(hp, f.name)) for f in fields(hp)]}")
 
             results = self.train_for_hp_set(hp)
-            if self.cos_similarity:
-                best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set = results
-            else:
-                best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
+
+            match self.model_arch:
+                case Model.CROSSENTROPY | Model.CROSSATTENTION:
+                    best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
+                case Model.COSINETHRESHOLD:
+                    best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set = results
+                    
             Y_observed[n] = np.max(epoch_val_f1)
             
             logger.info(f'Maximum validation F1 score: {np.max(epoch_val_f1)} \n')
@@ -234,7 +245,7 @@ class BOSearchTrain():
         candidates = BOSearchTrain.unnormalize_X(candidates_norm, self.bounds.T)
         return candidates
     
-    def train_for_hp_set(self, hp : HyperParameters) -> tuple[Any, ...]:
+    def train_for_hp_set(self, hp : HP) -> tuple[Any, ...]:
         """
         Trains a model based on a candidate set of hyperparameters.
 
@@ -246,42 +257,34 @@ class BOSearchTrain():
         """        
 
         fc_sizes = [hp.fc1, hp.fc2, hp.fc3]
-        model, optimizer, scheduler, train_loader, val_loader = self.train_config(hp.lr, hp.weight_decay, fc_sizes, hp.use_n_layers, hp.dropout, hp.batch_size)
+
+        if self.model_arch == Model.CROSSATTENTION:
+            extra_hp = {
+                'use_n_layers_cross_att' : hp.use_n_layers_cross_att,
+                'fc_cross_att_sizes' : [hp.fc1_cross_att, hp.fc2_cross_att]
+            }
+
+        model, optimizer, scheduler, train_loader, val_loader = self.train_config(hp.lr, hp.weight_decay, fc_sizes, hp.use_n_layers, hp.dropout, hp.batch_size, **extra_hp)
 
         assert isinstance(hp.n_freeze, int), 'n_freeze must be int'
 
         try:
-            if self.cos_similarity:
-                trainer = Train(
-                    model,
-                    optimizer,
-                    scheduler,
-                    self.criterion,
-                    self.device,
-                    hp.n_freeze,
-                    self.epochs,
-                    train_loader,
-                    val_loader,
-                    self.patience
-                )
-                results = trainer.run_training_loop()
-
-            else:
-                trainer = Train(
-                    model,
-                    optimizer,
-                    scheduler,
-                    self.criterion,
-                    self.device,
-                    hp.n_freeze,
-                    self.epochs,
-                    train_loader,
-                    val_loader,
-                    self.patience
-                )
-                results = trainer.run_training_loop()
+            trainer = Train(
+                model,
+                optimizer,
+                scheduler,
+                self.criterion,
+                self.device,
+                hp.n_freeze,
+                self.epochs,
+                train_loader,
+                val_loader,
+                self.patience
+            )
+            results = trainer.run_training_loop()
         finally:
-            del trainer, model, optimizer, scheduler
+
+            del trainer, model, optimizer, scheduler, train_loader, val_loader
 
             if self.device.type == 'mps':
                 torch.mps.empty_cache()
@@ -296,7 +299,9 @@ class BOSearchTrain():
                      fc_sizes : list[int],
                      use_n_layers : int,
                      dropout : float,
-                     batch_size : int
+                     batch_size : int,
+                     use_n_layers_cross_att : int = 0,
+                     fc_cross_att_sizes : list[int] = None
                      ) -> tuple[PairClassifier, torch.optim.Optimizer, LRScheduler, DataLoader, DataLoader]:
         """
         Inializes the training configurations that are dependent on hyperparameters.
@@ -325,10 +330,15 @@ class BOSearchTrain():
         assert isinstance(weight_decay, float), 'weight_decay must be float'
         assert isinstance(batch_size, int), 'batch_size must be int'
 
-        if self.cos_similarity:
-            model = PairClassifier.CosSimilarity(self.sbert_model, fc_sizes, use_n_layers, self.device, self.fixed, dropout)
-        else:
-            model = PairClassifier.CrossEntropy(self.sbert_model, fc_sizes, use_n_layers, self.device, self.fixed, dropout)
+        match self.model_arch:
+            case Model.CROSSENTROPY:
+                model = PairClassifier.CrossEntropy(self.sbert_model, fc_sizes, use_n_layers, self.device, self.fixed, dropout)
+            case Model.COSINETHRESHOLD:
+                model = PairClassifier.CosSimilarity(self.sbert_model, fc_sizes, use_n_layers, self.device, self.fixed, dropout)
+            case Model.CROSSATTENTION:
+                model = PairClassifier.CrossAttention(self.sbert_model, fc_sizes, use_n_layers, self.device, False, use_n_layers_cross_att, fc_cross_att_sizes, dropout)
+            case _:
+                raise(TypeError(f'{self.model_arch} is not a valid Model'))
 
         match self.optimizer:
             case Optimizer.ADAMW:
@@ -341,7 +351,8 @@ class BOSearchTrain():
                 scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps = n_warmup_steps, num_training_steps = steps)
             case _:
                 raise(TypeError(f'{self.scheduler} is not a valid Scheduler'))
-        if self.fixed:
+            
+        if self.fixed & self.model_arch != Model.CROSSATTENTION:
             train_loader = DataLoader(dataset = TextPairDataset(self.X_train, self.y_train), batch_size = batch_size, shuffle = True, num_workers = 4)
             val_loader = DataLoader(dataset = TextPairDataset(self.X_val, self.y_val), batch_size = batch_size, shuffle = True, num_workers = 4)
         else:
@@ -373,10 +384,12 @@ class BOSearchTrain():
             
             # Train and evaluate the hyperparameter set
             results = self.train_for_hp_set(hp)
-            if self.cos_similarity:
-                params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set = results
-            else:
-                params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
+
+            match self.model_arch:
+                case Model.CROSSENTROPY | Model.CROSSATTENTION:
+                    best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1 = results
+                case Model.COSINETHRESHOLD:
+                    best_params, avg_batch_train_loss, epoch_train_acc, avg_batch_val_loss, epoch_val_acc, epoch_val_f1, cosines_train_set, thresholds_train_set = results
             
             # Update current knowledge of the function
             y = torch.tensor([[np.max(epoch_val_f1)]])
