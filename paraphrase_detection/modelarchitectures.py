@@ -100,9 +100,9 @@ class PairClassifier():
                      fc_sizes : list,
                      use_n_layers : int,
                      device,
-                     fixed : bool,
-                     use_n_layers_cross_att : int,
-                     fc_sizes_cross_att : list[int],
+                     fixed : bool = False,
+                     use_n_layers_cross_att : int = 1,
+                     fc_sizes_cross_att : list[int] = [768],
                      dropout : float = 0.1
                      ):
             super().__init__()
@@ -142,7 +142,9 @@ class PairClassifier():
                     norm_layers.append(nn.LayerNorm(fc_sizes[layer+1]))
             self.layers = nn.ModuleList(layers)
             self.norm_layers=nn.ModuleList(norm_layers)
-            self.cross_attention = MHCrossAttention(dmodel=self.sbert[0].auto_model.config.hidden_size, use_n_layers_cross_att = use_n_layers_cross_att, fc_sizes_cross_att = fc_sizes_cross_att)
+            self.cross_attention = MHCrossAttention(dmodel=self.sbert[0].auto_model.config.hidden_size,
+                                                    use_n_layers_cross_att = use_n_layers_cross_att,
+                                                    fc_sizes_cross_att = fc_sizes_cross_att)
             
         def forward(self, x0 : np.ndarray, x1 : np.ndarray):
             transformed_x0=self.sbert[0].auto_model(**x0)
@@ -189,18 +191,19 @@ class MHCrossAttention(nn.Module):
 
         self.norm1 = nn.LayerNorm(dmodel)
         self.norm2 = nn.LayerNorm(dmodel)
-
+        print(fc_sizes_cross_att)
         fc_sizes_cross_att = fc_sizes_cross_att[:use_n_layers_cross_att]
 
         layers = [nn.Linear(dmodel, fc_sizes_cross_att[0])]
+
         for layer in range(len(fc_sizes_cross_att)):
             if layer == len(fc_sizes_cross_att) - 1:
                 layers.append(nn.Linear(fc_sizes_cross_att[layer],dmodel))
             else:
                 layers.append(nn.Linear(fc_sizes_cross_att[layer], fc_sizes_cross_att[layer + 1]))
-
+        
         self.layers = nn.ModuleList(layers)
-
+        print(self.layers)
 
         # layers = []
         # layers.append(nn.Linear(dmodel, fc_sizes_cross_att[0]))
@@ -212,9 +215,9 @@ class MHCrossAttention(nn.Module):
     def forward(self, A, B, attention_maskB, dropout_p=0.1) -> torch.Tensor:
         head_attention=[]
         for i in range(self.h):
-            Q=self.WQ_list[i](A)
-            K=self.WK_list[i](B)
-            V=self.WV_list[i](B)
+            Q = self.WQ_list[i](A)
+            K = self.WK_list[i](B)
+            V = self.WV_list[i](B)
             scores=torch.bmm(Q,K.transpose(1,2))/math.sqrt(self.dk)
             scores.masked_fill_(attention_maskB.unsqueeze(1)==0,float("-inf"))
             attention_weights=nn.functional.softmax(scores,dim=-1)

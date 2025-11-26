@@ -37,7 +37,7 @@ class BOSearchTrain():
 
     def __init__(self,
                  bounds : torch.Tensor,
-                 sbert_model : SentenceTransformer,
+                 sbert_model : str,
                  X_train : np.ndarray,
                  y_train : np.ndarray,
                  X_val : np.ndarray,
@@ -59,7 +59,7 @@ class BOSearchTrain():
         Args:
             bounds (torch.Tensor): Bounds of the hyperparameters search space
             names (list): Name of the hyperparameter to be tuned in BO
-            sbert_model (SentenceTransformer): SBERT model used from SentenceTransformer
+            sbert_model (str): SBERT model used from SentenceTransformer
             X_train (np.ndarray): Design matrix of training data
             y_train (np.ndarray): Label array of training data
             X_val (np.ndarray): Design matrix of validation data
@@ -323,18 +323,28 @@ class BOSearchTrain():
         assert isinstance(fc_sizes, list), 'fc_sizes must be list'
         assert isinstance(use_n_layers, int), 'use_n_layers must be int'
         assert isinstance(dropout, float), 'dropout must be float'
-        assert isinstance(dropout, float), 'dropout must be float'
         assert isinstance(lr, float), 'dropout must be float'
         assert isinstance(weight_decay, float), 'weight_decay must be float'
         assert isinstance(batch_size, int), 'batch_size must be int'
+        
+        # print(fc_sizes, use_n_layers, dropout, lr, weight_decay, batch_size, use_n_layers_cross_att, fc_cross_att_sizes)
+
+        sbert_model = SentenceTransformer(self.sbert_model)
 
         match self.model_arch:
             case Model.CROSSENTROPY:
-                model = PairClassifier.CrossEntropy(self.sbert_model, fc_sizes, use_n_layers, self.device, self.fixed, dropout)
+                model = PairClassifier.CrossEntropy(sbert_model, fc_sizes, use_n_layers, self.device, self.fixed, dropout)
             case Model.COSINETHRESHOLD:
-                model = PairClassifier.CosSimilarity(self.sbert_model, fc_sizes, use_n_layers, self.device, self.fixed, dropout)
+                model = PairClassifier.CosSimilarity(sbert_model, fc_sizes, use_n_layers, self.device, self.fixed, dropout)
             case Model.CROSSATTENTION:
-                model = PairClassifier.CrossAttention(self.sbert_model, fc_sizes, use_n_layers, self.device, False, use_n_layers_cross_att, fc_cross_att_sizes, dropout)
+                model = PairClassifier.CrossAttention(model = sbert_model,
+                                                      fc_sizes = fc_sizes,
+                                                      use_n_layers = use_n_layers,
+                                                      device = self.device,
+                                                      use_n_layers_cross_att = use_n_layers_cross_att,
+                                                      fc_sizes_cross_att = fc_cross_att_sizes,
+                                                      dropout = dropout
+                                                      )
             case _:
                 raise(TypeError(f'{self.model_arch} is not a valid Model'))
 
@@ -350,7 +360,7 @@ class BOSearchTrain():
             case _:
                 raise(TypeError(f'{self.scheduler} is not a valid Scheduler'))
             
-        if self.fixed and self.model_arch != Model.CROSSATTENTION:
+        if self.fixed:
             train_loader = DataLoader(dataset = TextPairDataset(self.X_train, self.y_train), batch_size = batch_size, shuffle = True, num_workers = 4)
             val_loader = DataLoader(dataset = TextPairDataset(self.X_val, self.y_val), batch_size = batch_size, shuffle = True, num_workers = 4)
         else:
