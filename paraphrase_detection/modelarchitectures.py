@@ -126,7 +126,7 @@ class PairClassifier():
 
             self.layers = nn.ModuleList(layers)
             self.norm_layers = nn.ModuleList(norm_layers)
-            self.cross_attention = CrossAttention(dmodel=self.sbert[0].auto_model.config.hidden_size, use_n_layers_cross_att = use_n_layers_cross_att, fc_sizes_cross_att = )
+            self.cross_attention = CrossAttention(dmodel=self.sbert[0].auto_model.config.hidden_size, use_n_layers_cross_att = use_n_layers_cross_att, fc_sizes_cross_att = fc_sizes_cross_att)
             
         def forward(self, x0 : np.ndarray, x1 : np.ndarray):
             transformed_x0 = self.sbert[0].auto_model(**x0)

@@ -48,7 +48,6 @@ class BOSearchTrain():
                  n_init_samples : int,
                  n_iterations : int,
                  fixed : bool,
-                 cos_similarity : bool,
                  epochs : int,
                  patience : int,
                  model_arch : Model
@@ -71,7 +70,6 @@ class BOSearchTrain():
             n_init_samples (int): Number of samples to initialize the surrogate model
             n_iterations (int): Maximal number of iterations of BO
             fixed (bool): Determines if the SBERT layers are to be kept fixed (fixed = True) or trainable (fixed = False)
-            cos_similarity (bool): Determinines if it should inialize the SBERTPairClassifier with cosine similarity or 
             the cross entropy classifier
             epochs (int): Number of epochs to run during training
         """        
@@ -86,7 +84,6 @@ class BOSearchTrain():
         self.criterion = criterion
         self.device = device
         self.fixed = fixed
-        self.cos_similarity = cos_similarity
         self.epochs = epochs
         self.optimizer = optimizer
         self.scheduler = scheduler
