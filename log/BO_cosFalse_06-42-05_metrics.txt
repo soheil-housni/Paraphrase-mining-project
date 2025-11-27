@@ -1,0 +1,9 @@
+ epoch  avg_batch_train_loss  epoch_train_acc  avg_batch_val_loss  epoch_val_acc  epoch_val_f1
+   1.0              0.447513         0.785561            0.413880       0.798431      0.777389
+   2.0              0.382056         0.818984            0.386785       0.822745      0.813964
+   3.0              0.342994         0.840749            0.418119       0.838431      0.829744
+   4.0              0.315876         0.854439            0.390317       0.822353      0.807010
+ 
+Model with highest F1 score: 
+ epoch  avg_batch_train_loss  epoch_train_acc  avg_batch_val_loss  epoch_val_acc  epoch_val_f1
+   3.0              0.342994         0.840749            0.418119       0.838431      0.829744
