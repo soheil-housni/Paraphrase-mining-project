@@ -127,6 +127,7 @@ class PairClassifier():
             # self.norm_layers = nn.ModuleList(norm_layers)
             
             OUPUT_DIM = 2
+            
             EMB_DIM = model.get_sentence_embedding_dimension()
             
             self.norm1=nn.LayerNorm(self.sbert.get_sentence_embedding_dimension())
@@ -191,7 +192,7 @@ class MHCrossAttention(nn.Module):
 
         self.norm1 = nn.LayerNorm(dmodel)
         self.norm2 = nn.LayerNorm(dmodel)
-        print(fc_sizes_cross_att)
+        
         fc_sizes_cross_att = fc_sizes_cross_att[:use_n_layers_cross_att]
 
         layers = [nn.Linear(dmodel, fc_sizes_cross_att[0])]
@@ -203,7 +204,7 @@ class MHCrossAttention(nn.Module):
                 layers.append(nn.Linear(fc_sizes_cross_att[layer], fc_sizes_cross_att[layer + 1]))
         
         self.layers = nn.ModuleList(layers)
-        print(self.layers)
+        
 
         # layers = []
         # layers.append(nn.Linear(dmodel, fc_sizes_cross_att[0]))

@@ -33,7 +33,7 @@ class BOSearchTrain():
     RAW_SAMPLES = 50
     WARMUP_STEPS_RATIO = 0.1
     EARLY_STOP_THRESHOLD = 0.01
-    EARLY_STOP_WINDOW = 6
+    EARLY_STOP_WINDOW = 5
 
     def __init__(self,
                  bounds : torch.Tensor,
