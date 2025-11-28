@@ -81,8 +81,7 @@ class Train():
                 if self.fixed:
                     train_X_batch = np.array(train_X_batch).T
                     train_x0 = train_X_batch[:,0].tolist()
-                    train_x1 = train_X_batch[:,1].tolist()
-                    
+                    train_x1 = train_X_batch[:,1].tolist()  
                 else:
                     train_x0 = train_X_batch[0]
                     train_x0 = {k : v.to(self.device) for k, v in train_x0.items()}

@@ -9,25 +9,36 @@ class test():
             model,
             test_loader,
             criterion,
-            device
+            device,
     ):
         self.model=model
         self.criterion=criterion
         self.device=device
         self.test_loader=test_loader
         self.model.to(self.device)
+        self.fixed=model.fixed
 
     def run_testing_loop(self):
         self.model.eval()
-        with torch.no_grad:
+        with torch.no_grad():
             test_batch_losses=[]
             all_test_preds=[]
             all_test_labels=[]
             for test_X_batch, test_y_batch in self.test_loader:
-                test_X_batch.to(self.device)
+                if self.fixed:
+                    test_X_batch = np.array(test_X_batch).T
+                    test_x0 = test_X_batch[:,0].tolist()
+                    test_x1 = test_X_batch[:,1].tolist()
+                else:
+                    test_x0=test_X_batch[0]
+                    test_x0={k:v.to(self.device) for k,v in test_x0.items()}
+                    test_x1=test_X_batch[1]
+                    test_x1={k:v.to(self.device) for k,v in test_x1.items()}
                 test_y_batch.to(self.device)
-                logits=self.model(test_X_batch)
+                
+                logits=self.model(test_x0,test_x1)
                 test_y_batch=test_y_batch.view(-1)
+                
                 loss=self.criterion(logits, test_y_batch)
                 test_batch_losses.append(loss.item())
                 preds=torch.argmax(logits,dim=1)
