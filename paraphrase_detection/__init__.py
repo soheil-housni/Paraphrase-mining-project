@@ -5,6 +5,9 @@ from .dataloader import TextPairDataset
 from .logger import log_metrics_and_model, log_bo_results
 from .hyperparameterselection import BOSearchTrain
 from .hyperparametersets import HP
+from .PlottingV2 import plotting_metrics,plotting_distribution_hyperparams
+from .Conversion_text_to_df import text_to_df
+
 
 assert HP
 assert data_shuffle_split
@@ -15,3 +18,6 @@ assert log_metrics_and_model
 assert log_bo_results
 assert BOSearchTrain
 assert MHCrossAttention
+assert text_to_df
+assert plotting_metrics
+assert plotting_distribution_hyperparams
