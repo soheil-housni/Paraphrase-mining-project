@@ -35,9 +35,9 @@ def plotting_metrics(df, CrossAttention=True):
     ax[2].grid(True, linestyle='--', alpha=0.7)
 
     if CrossAttention:
-        fig.suptitle("Metrics for the best CrossAttention model", fontsize=16, fontweight='bold')
+        fig.suptitle("Metrics for the best SBert Cross-Attention model", fontsize=16, fontweight='bold')
     else:
-        fig.suptitle("Metrics for the best Classic Classifier model", fontsize=16, fontweight='bold')
+        fig.suptitle("Metrics for the best SBert Classic Classifier model", fontsize=16, fontweight='bold')
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     plt.show()
@@ -84,9 +84,9 @@ def plotting_distribution_hyperparams(df, CrossAttention=True):
     ax[2,1].set_ylabel("Count")
 
     if CrossAttention:
-        fig.suptitle("Hyperparameter Distributions for the Best CrossAttention Model", fontsize=16, fontweight='bold')
+        fig.suptitle("Hyperparameters Distributions for the Best SBert Cross-Attention Model", fontsize=16, fontweight='bold')
     else:
-        fig.suptitle("Hyperparameter Distributions for the Best Classic Classifier Model", fontsize=16, fontweight='bold')
+        fig.suptitle("Hyperparameters Distributions for the Best SBert Classic Classifier Model", fontsize=16, fontweight='bold')
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     plt.show()
