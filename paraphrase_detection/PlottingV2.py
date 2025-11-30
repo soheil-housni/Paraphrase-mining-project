@@ -35,9 +35,9 @@ def plotting_metrics(df, CrossAttention=True):
     ax[2].grid(True, linestyle='--', alpha=0.7)
 
     if CrossAttention:
-        fig.suptitle("Metrics for the best SBert Cross-Attention model", fontsize=16, fontweight='bold')
+        fig.suptitle("Metrics for the best Cross-Attention SBert model", fontsize=16, fontweight='bold')
     else:
-        fig.suptitle("Metrics for the best SBert Classic Classifier model", fontsize=16, fontweight='bold')
+        fig.suptitle("Metrics for the best Standard SBert Classifier model", fontsize=16, fontweight='bold')
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     plt.show()
@@ -86,7 +86,110 @@ def plotting_distribution_hyperparams(df, CrossAttention=True):
     if CrossAttention:
         fig.suptitle("Hyperparameters Distributions for the Best SBert Cross-Attention Model", fontsize=16, fontweight='bold')
     else:
-        fig.suptitle("Hyperparameters Distributions for the Best SBert Classic Classifier Model", fontsize=16, fontweight='bold')
+        fig.suptitle("Hyperparameters Distributions for the Best SBert Standard Classifier Model", fontsize=16, fontweight='bold')
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.show()
+
+def plotting_comparison(df_classic, df_c_a):
+    plt.style.use('seaborn-darkgrid')
+    fig, ax = plt.subplots(3, 2, figsize=(16, 16))
+
+
+    ax[0,0].plot(df_classic["epoch"], df_classic["avg_batch_train_loss"],
+                 label="Train Loss", linestyle='-', marker='o', color='#d62728')
+    ax[0,0].plot(df_classic["epoch"], df_classic["avg_batch_val_loss"],
+                 label="Validation Loss", linestyle='--', marker='x', color='#ff7f0e')
+
+    ax[0,0].set_xlabel("Epochs", fontsize=12)
+    ax[0,0].set_ylabel("Loss", fontsize=12)
+    ax[0,0].set_title("Loss Across Epochs – Standard SBert Classifier",
+                      fontsize=14, fontweight='bold')
+
+    y_min = 0.95 * min(df_classic["avg_batch_train_loss"].min(),
+                       df_classic["avg_batch_val_loss"].min())
+    y_max = 1.05 * max(df_classic["avg_batch_train_loss"].max(),
+                       df_classic["avg_batch_val_loss"].max())
+    ax[0,0].set_ylim(y_min, y_max)
+
+    ax[0,0].legend(frameon=True, framealpha=0.9)
+    ax[0,0].grid(True, linestyle='--', alpha=0.7)
+
+
+    ax[0,1].plot(df_c_a["epoch"], df_c_a["avg_batch_train_loss"],
+                 label="Train Loss", linestyle='-', marker='o', color='#d62728')
+    ax[0,1].plot(df_c_a["epoch"], df_c_a["avg_batch_val_loss"],
+                 label="Validation Loss", linestyle='--', marker='x', color='#ff7f0e')
+
+    ax[0,1].set_xlabel("Epochs", fontsize=12)
+    ax[0,1].set_ylabel("Loss", fontsize=12)
+    ax[0,1].set_title("Loss Across Epochs – Cross-Attention SBert Classifier",
+                      fontsize=14, fontweight='bold')
+
+    y_min = 0.95 * min(df_c_a["avg_batch_train_loss"].min(),
+                       df_c_a["avg_batch_val_loss"].min())
+    y_max = 1.05 * max(df_c_a["avg_batch_train_loss"].max(),
+                       df_c_a["avg_batch_val_loss"].max())
+    ax[0,1].set_ylim(y_min, y_max)
+
+    ax[0,1].legend(frameon=True, framealpha=0.9)
+    ax[0,1].grid(True, linestyle='--', alpha=0.7)
+
+
+    ax[1,0].plot(df_classic["epoch"], df_classic["epoch_train_acc"],
+                 label="Train Accuracy", linestyle='-', marker='o' ,color='#1f77b4')
+    ax[1,0].plot(df_classic["epoch"], df_classic["epoch_val_acc"],
+                 label="Validation Accuracy", linestyle='--', marker='x',color='#2ca02c')
+
+    ax[1,0].set_xlabel("Epochs", fontsize=12)
+    ax[1,0].set_ylabel("Accuracy", fontsize=12)
+    ax[1,0].set_title("Accuracy Across Epochs – Standard SBert Classifier",
+                      fontsize=14, fontweight='bold')
+
+    ax[1,0].legend(frameon=True, framealpha=0.9)
+    ax[1,0].grid(True, linestyle='--', alpha=0.7)
+
+
+    ax[1,1].plot(df_c_a["epoch"], df_c_a["epoch_train_acc"],
+                 label="Train Accuracy", linestyle='-', marker='o',color='#1f77b4')
+    ax[1,1].plot(df_c_a["epoch"], df_c_a["epoch_val_acc"],
+                 label="Validation Accuracy", linestyle='--', marker='x',color='#2ca02c')
+
+    ax[1,1].set_xlabel("Epochs", fontsize=12)
+    ax[1,1].set_ylabel("Accuracy", fontsize=12)
+    ax[1,1].set_title("Accuracy Across Epochs – Cross-Attention SBert Classifier",
+                      fontsize=14, fontweight='bold')
+
+    ax[1,1].legend(frameon=True, framealpha=0.9)
+    ax[1,1].grid(True, linestyle='--', alpha=0.7)
+
+    ax[2,0].plot(df_classic["epoch"], df_classic["epoch_val_f1"],
+                 label="Validation F1", marker='s', color='#9467bd')
+
+    ax[2,0].set_xlabel("Epochs", fontsize=12)
+    ax[2,0].set_ylabel("F1 Score", fontsize=12)
+    ax[2,0].set_title("Validation F1 Across Epochs – Standard SBert",
+                      fontsize=14, fontweight='bold')
+
+    ax[2,0].legend(frameon=True, framealpha=0.9)
+    ax[2,0].grid(True, linestyle='--', alpha=0.7)
+
+    ax[2,1].plot(df_c_a["epoch"], df_c_a["epoch_val_f1"],
+                 label="Validation F1", marker='s', color='#9467bd')
+
+    ax[2,1].set_xlabel("Epochs", fontsize=12)
+    ax[2,1].set_ylabel("F1 Score", fontsize=12)
+    ax[2,1].set_title("Validation F1 Across Epochs – Cross-Attention SBert",
+                      fontsize=14, fontweight='bold')
+
+    ax[2,1].legend(frameon=True, framealpha=0.9)
+    ax[2,1].grid(True, linestyle='--', alpha=0.7)
+
+
+    fig.suptitle(
+        "Comparison of Standard SBert vs. Cross-Attention SBert (Best Models)",
+        fontsize=18, fontweight='bold', y=1.02
+    )
+
+    plt.tight_layout()
     plt.show()
