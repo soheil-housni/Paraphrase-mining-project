@@ -12,4 +12,4 @@ not consistently outperform the SBERT baseline under limited data, suggesting th
 the added capacity increases optimization sensitivity and may require larger-scale
 training to yield clear gains.
 
-You can find the complete pdf report in the repository
+You can find the complete pdf report in the repository.
